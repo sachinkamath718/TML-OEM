@@ -70,13 +70,15 @@ export default function App() {
     };
   }, []);
 
-  // ─── Filter orders by search ───────────────────────────────────────────────
-  const filteredOrders = orders.filter(
-    (o) =>
-      o.title.toLowerCase().includes(search.toLowerCase()) ||
-      o.id.toLowerCase().includes(search.toLowerCase()) ||
-      o.customer.toLowerCase().includes(search.toLowerCase())
-  );
+  // ─── Filter by active module + search ─────────────────────────────────────
+  const filteredOrders = orders
+    .filter((o) => o.module === activeModule)
+    .filter(
+      (o) =>
+        o.title.toLowerCase().includes(search.toLowerCase()) ||
+        o.id.toLowerCase().includes(search.toLowerCase()) ||
+        o.customer.toLowerCase().includes(search.toLowerCase())
+    );
 
   // ─── Move ticket to a new status ──────────────────────────────────────────
   async function handleMove({ targetCol, user, note }) {
@@ -107,7 +109,6 @@ export default function App() {
 
       if (error) throw error;
 
-      // Optimistic local update
       setOrders((prev) =>
         prev.map((o) => {
           if (o.id !== moveTarget.id) return o;
@@ -120,7 +121,6 @@ export default function App() {
         })
       );
 
-      // Keep history modal in sync if open
       if (historyTarget && historyTarget.id === moveTarget.id) {
         setHistoryTarget((prev) => ({
           ...prev,
@@ -151,25 +151,17 @@ export default function App() {
     setMoveTarget(null);
   }
 
-  // ─── Create a new order ───────────────────────────────────────────────────
-  async function handleCreate(newOrder) {
+  // ─── Create orders (one per module) ───────────────────────────────────────
+  async function handleCreate(newOrders) {
     try {
-      // Replace 'column' key with 'status' if NewOrderModal sends column
-      const orderToInsert = {
-        ...newOrder,
-        status: newOrder.status || newOrder.column || 'Pending',
-      };
-      delete orderToInsert.column; // remove old key if present
-
       const { data, error } = await supabase
         .from('orders')
-        .insert([orderToInsert])
-        .select()
-        .single();
+        .insert(newOrders)
+        .select();
 
       if (error) throw error;
 
-      setOrders((prev) => [data || orderToInsert, ...prev]);
+      setOrders((prev) => [...(data || newOrders), ...prev]);
       setShowNewOrder(false);
     } catch (err) {
       console.error('Error creating order:', err);
@@ -244,7 +236,7 @@ export default function App() {
       <Sidebar
         activeModule={activeModule}
         onSelect={setActiveModule}
-        totalOrders={orders.length}
+        totalOrders={orders.filter((o) => o.module === activeModule).length}
       />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -267,7 +259,7 @@ export default function App() {
               </span>
             </div>
             <div style={{ fontSize: 12, color: '#6B7280', marginTop: 1 }}>
-              {orders.length} total · {inProcessCount} in progress
+              {orders.filter((o) => o.module === activeModule).length} total · {inProcessCount} in progress
             </div>
           </div>
 
