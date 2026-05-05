@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { COL_COLORS, PRIORITY_COLORS } from '../constants';
+import { PRIORITY_COLORS } from '../constants';
 import Avatar from './Avatar';
 
 export default function TicketCard({ order, onMoveClick, onHistoryClick }) {
