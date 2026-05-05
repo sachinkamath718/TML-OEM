@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { generateId, generateTrackingId } from '../utils';
 
+const MODULES = ['Orders', 'Shipment', 'Delivery', 'Installation', 'AIS140', 'Mining'];
+
 export default function NewOrderModal({ onClose, onCreate }) {
   const [title, setTitle] = useState('');
   const [customer, setCustomer] = useState('');
@@ -26,29 +28,34 @@ export default function NewOrderModal({ onClose, onCreate }) {
     setError('');
 
     const trackingId = generateTrackingId();
-    const id = 'ORD-' + generateId().slice(0, 5);
+    const baseId = 'ORD-' + generateId().slice(0, 5);
 
-   onCreate({
-     id,
-     tracking_id: trackingId,
-     title,
-     customer,
-     priority,
-     tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-     status: 'Pending',
-     assignee: null,
-     history: [
-        {
-          id: 'h-' + generateId(),
-          action: 'Order Created',
-          from: null,
-          to: 'Pending',
-          timestamp: new Date().toISOString(),
-          user: { name: creatorName, phone: creatorPhone, role: '' },
-          note: 'New order created and placed in Pending',
-        },
-      ],
-    });
+    const historyEntry = {
+      id: 'h-' + generateId(),
+      action: 'Order Created',
+      from: null,
+      to: 'Pending',
+      timestamp: new Date().toISOString(),
+      user: { name: creatorName, phone: creatorPhone, role: '' },
+      note: 'New order created and placed in Pending',
+    };
+
+    // Create one row per module, all starting as Pending
+    const orders = MODULES.map((module) => ({
+      id: baseId + '-' + module.slice(0, 3).toUpperCase(),
+      tracking_id: trackingId,
+      title,
+      customer,
+      vin,
+      priority,
+      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+      status: 'Pending',
+      assignee: null,
+      module,
+      history: [historyEntry],
+    }));
+
+    onCreate(orders);
   }
 
   return (
@@ -68,7 +75,12 @@ export default function NewOrderModal({ onClose, onCreate }) {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 18 }}>Create New Order</div>
+        <div style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
+          Create New Order
+        </div>
+        <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 18 }}>
+          This will create a Pending ticket in all 6 modules automatically.
+        </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div style={{ gridColumn: '1 / -1' }}>
@@ -116,10 +128,16 @@ export default function NewOrderModal({ onClose, onCreate }) {
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 13, cursor: 'pointer' }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 13, cursor: 'pointer' }}
+          >
             Cancel
           </button>
-          <button onClick={handleCreate} style={{ padding: '9px 22px', borderRadius: 8, border: 'none', background: '#4F46E5', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          <button
+            onClick={handleCreate}
+            style={{ padding: '9px 22px', borderRadius: 8, border: 'none', background: '#4F46E5', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+          >
             Create Order
           </button>
         </div>
