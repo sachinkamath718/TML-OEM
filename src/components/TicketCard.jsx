@@ -64,7 +64,7 @@ export default function TicketCard({ order, onMoveClick, onHistoryClick }) {
 
       {/* VIN */}
       <div style={{ fontSize: 10, color: '#9CA3AF', marginBottom: 8 }}>
-        <span style={{ fontFamily: 'monospace' }}>VIN: {order.vin.slice(0, 8)}…</span>
+      <span style={{ fontFamily: 'monospace' }}>VIN: {order.vin ? order.vin.slice(0, 8) + '…' : 'N/A'}</span>
       </div>
 
       {/* Footer */}
