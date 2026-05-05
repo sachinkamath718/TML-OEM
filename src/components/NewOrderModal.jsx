@@ -28,14 +28,16 @@ export default function NewOrderModal({ onClose, onCreate }) {
     const trackingId = generateTrackingId();
     const id = 'ORD-' + generateId().slice(0, 5);
 
-    onCreate({
-      id, trackingId, title, customer, vin,
-      priority,
-      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-      createdAt: new Date().toISOString(),
-      column: 'Pending',
-      assignee: null,
-      history: [
+   onCreate({
+  id,
+  tracking_id: trackingId,
+  title,
+  customer,
+  priority,
+  tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+  status: 'Pending',
+  assignee: null,
+  history: [
         {
           id: 'h-' + generateId(),
           action: 'Order Created',
