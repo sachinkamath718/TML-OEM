@@ -38,7 +38,7 @@ export default function HistoryModal({ order, onClose }) {
           <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 11, color: '#6B7280' }}>
               <span style={{ fontWeight: 600, color: '#374151' }}>Tracking ID: </span>
-              <span style={{ fontFamily: 'monospace', color: '#6366F1' }}>{order.trackingId}</span>
+              <span style={{ fontFamily: 'monospace', color: '#6366F1' }}>{order.tracking_Id}</span>
             </div>
             <div style={{ fontSize: 11, color: '#6B7280' }}>
               <span style={{ fontWeight: 600, color: '#374151' }}>VIN: </span>
@@ -47,12 +47,12 @@ export default function HistoryModal({ order, onClose }) {
             <span
               style={{
                 padding: '2px 10px', borderRadius: 20, fontWeight: 600,
-                background: COL_COLORS[order.column].bg,
-                color: COL_COLORS[order.column].text,
-                fontSize: 11,
-              }}
-            >
-              {order.column}
+               background: COL_COLORS[order.status]?.bg,
+               color: COL_COLORS[order.status]?.text,
+               fontSize: 11,
+}}
+           >
+          {order.status}
             </span>
           </div>
         </div>
