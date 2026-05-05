@@ -44,7 +44,7 @@ export default function App() {
     fetchOrders();
   }, []);
 
-  // ─── Real-time subscription (optional but great for multi-user) ────────────
+  // ─── Real-time subscription ────────────────────────────────────────────────
   useEffect(() => {
     const channel = supabase
       .channel('orders-changes')
@@ -78,7 +78,7 @@ export default function App() {
       o.customer.toLowerCase().includes(search.toLowerCase())
   );
 
-  // ─── Move ticket to a new column ──────────────────────────────────────────
+  // ─── Move ticket to a new status ──────────────────────────────────────────
   async function handleMove({ targetCol, user, note }) {
     const order = orders.find((o) => o.id === moveTarget.id);
     if (!order) return;
@@ -86,7 +86,7 @@ export default function App() {
     const newHistoryEntry = {
       id: 'h-' + generateId(),
       action: 'Status Changed',
-      from: order.column,
+      from: order.status,
       to: targetCol,
       timestamp: new Date().toISOString(),
       user,
@@ -99,7 +99,7 @@ export default function App() {
       const { error } = await supabase
         .from('orders')
         .update({
-          column: targetCol,
+          status: targetCol,
           assignee: user.name,
           history: updatedHistory,
         })
@@ -113,7 +113,7 @@ export default function App() {
           if (o.id !== moveTarget.id) return o;
           return {
             ...o,
-            column: targetCol,
+            status: targetCol,
             assignee: user.name,
             history: updatedHistory,
           };
@@ -124,26 +124,22 @@ export default function App() {
       if (historyTarget && historyTarget.id === moveTarget.id) {
         setHistoryTarget((prev) => ({
           ...prev,
-          column: targetCol,
+          status: targetCol,
           assignee: user.name,
           history: updatedHistory,
         }));
       }
 
       // ── Webhook triggers (per spec) ──────────────────────────────────────
-      // Shipment or Installation → Completed
       if (
         (activeModule === 'Shipment' || activeModule === 'Installation') &&
         targetCol === 'Completed'
       ) {
-        // await triggerWebhook({ module: activeModule, order: { ...order, column: targetCol } });
         console.log(`Webhook: ${activeModule} → Completed for order ${order.id}`);
       }
 
-      // AIS140 or Mining → In Process or Completed
       if (activeModule === 'AIS140' || activeModule === 'Mining') {
         if (targetCol === 'In Process' || targetCol === 'Completed') {
-          // await triggerWebhook({ module: activeModule, order: { ...order, column: targetCol } });
           console.log(`Webhook: ${activeModule} → ${targetCol} for order ${order.id}`);
         }
       }
@@ -158,16 +154,22 @@ export default function App() {
   // ─── Create a new order ───────────────────────────────────────────────────
   async function handleCreate(newOrder) {
     try {
+      // Replace 'column' key with 'status' if NewOrderModal sends column
+      const orderToInsert = {
+        ...newOrder,
+        status: newOrder.status || newOrder.column || 'Pending',
+      };
+      delete orderToInsert.column; // remove old key if present
+
       const { data, error } = await supabase
         .from('orders')
-        .insert([newOrder])
+        .insert([orderToInsert])
         .select()
         .single();
 
       if (error) throw error;
 
-      // Use the returned row (with any DB defaults applied)
-      setOrders((prev) => [data || newOrder, ...prev]);
+      setOrders((prev) => [data || orderToInsert, ...prev]);
       setShowNewOrder(false);
     } catch (err) {
       console.error('Error creating order:', err);
@@ -175,7 +177,7 @@ export default function App() {
     }
   }
 
-  const inProcessCount = filteredOrders.filter((o) => o.column === 'In Process').length;
+  const inProcessCount = filteredOrders.filter((o) => o.status === 'In Process').length;
 
   // ─── Loading state ─────────────────────────────────────────────────────────
   if (loading) {
@@ -310,7 +312,7 @@ export default function App() {
               <KanbanColumn
                 key={col}
                 col={col}
-                orders={filteredOrders.filter((o) => o.column === col)}
+                orders={filteredOrders.filter((o) => o.status === col)}
                 onMoveClick={setMoveTarget}
                 onHistoryClick={setHistoryTarget}
               />
