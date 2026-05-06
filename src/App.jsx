@@ -191,6 +191,20 @@ export default function App() {
 
 async function handleCreate(tmlPayload, supabaseOrders) {
   try {
+    async function handleCreate(tmlPayload, supabaseOrders) {
+  try {
+    // Show payload in an alert so you can see it
+    alert('Sending payload:\n' + JSON.stringify(tmlPayload, null, 2));
+
+    const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
+    
+    if (tmlError) {
+      alert('TML Error: ' + tmlError);
+      return;
+    }
+    // ... rest of your code
+  }
+}
     // Step 1: Hit TML API
     const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
     if (tmlError) { alert('TML API error: ' + tmlError); return; }
