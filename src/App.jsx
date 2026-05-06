@@ -11,10 +11,7 @@ import BulkMoveModal from './components/BulkMoveModal';
 
 import { supabase } from './supabaseClient';
 
-const MODULE_ICONS = {
-  Orders: null, Shipment: null, Delivery: null,
-  Installation: null, AIS140: null, Mining: null,
-};
+
 
 export default function App() {
   const [activeModule, setActiveModule] = useState('Orders');
