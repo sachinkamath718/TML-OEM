@@ -1,4 +1,4 @@
-const BASE_URL = 'https://tml-oem-api.vercel.app';
+const BASE_URL = '/tml-api';
 const CLIENT_ID = 'tml-client-id';
 const CLIENT_SECRET = 'tml-client-secret';
 
