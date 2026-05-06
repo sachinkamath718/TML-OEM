@@ -16,20 +16,22 @@ const emptyVehicle = () => ({
   products: [{ name: 'AIS140', duration_in_years: 2, metadata: null }],
 });
 
+function formatPhone(val) {
+  const t = val.trim();
+  return t.startsWith('+') ? t : '+91' + t;
+}
+
 export default function NewOrderModal({ onClose, onCreate }) {
-  // ── Order-level fields ──────────────────────────────────────────────────
   const [title,    setTitle]    = useState('');
   const [priority, setPriority] = useState('Medium');
   const [tags,     setTags]     = useState('');
 
-  // ── Customer details ────────────────────────────────────────────────────
   const [custName,    setCustName]    = useState('');
   const [custPan,     setCustPan]     = useState('');
   const [custGst,     setCustGst]     = useState('');
   const [custEmail,   setCustEmail]   = useState('');
   const [custContact, setCustContact] = useState('');
 
-  // ── Location + SPOC ─────────────────────────────────────────────────────
   const [locAddress,  setLocAddress]  = useState('');
   const [locCity,     setLocCity]     = useState('');
   const [locPincode,  setLocPincode]  = useState('');
@@ -39,12 +41,10 @@ export default function NewOrderModal({ onClose, onCreate }) {
   const [spocPhone,   setSpocPhone]   = useState('');
   const [spocEmail,   setSpocEmail]   = useState('');
 
-  // ── Vehicles ─────────────────────────────────────────────────────────────
   const [vehicles, setVehicles] = useState([emptyVehicle()]);
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
 
-  // ── Styles ───────────────────────────────────────────────────────────────
   const inputStyle = {
     width: '100%', padding: '8px 10px', borderRadius: 7,
     border: '1px solid #D1D5DB', fontSize: 12, outline: 'none',
@@ -61,7 +61,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
     fontSize: 12, fontWeight: 700, color: '#111827', marginBottom: 10,
   };
 
-  // ── Vehicle helpers ──────────────────────────────────────────────────────
   function updateVehicle(id, field, value) {
     setVehicles((prev) => prev.map((v) => v.id === id ? { ...v, [field]: value } : v));
   }
@@ -93,21 +92,20 @@ export default function NewOrderModal({ onClose, onCreate }) {
     setVehicles((prev) => prev.filter((v) => v.id !== id));
   }
 
-  // ── Submit ───────────────────────────────────────────────────────────────
   async function handleCreate() {
-    if (!title.trim())      return setError('Order title required.');
-    if (!custName.trim())   return setError('Customer name required.');
+    if (!title.trim())       return setError('Order title required.');
+    if (!custName.trim())    return setError('Customer name required.');
     if (!custContact.trim()) return setError('Customer contact required.');
-    if (!locCity.trim())    return setError('Location city required.');
-    if (!locState.trim())   return setError('Location state required.');
-    if (!spocName.trim())   return setError('SPOC name required.');
+    if (!locCity.trim())     return setError('Location city required.');
+    if (!locState.trim())    return setError('Location state required.');
+    if (!spocName.trim())    return setError('SPOC name required.');
     for (const v of vehicles) {
-      if (!v.vin.trim())         return setError('VIN is required for all vehicles.');
-      if (!v.engine_no.trim())   return setError(`Engine No required for VIN ${v.vin || '(empty)'}.`);
-      if (!v.make.trim())        return setError(`Make required for VIN ${v.vin || '(empty)'}.`);
+      if (!v.vin.trim())             return setError('VIN is required for all vehicles.');
+      if (!v.engine_no.trim())       return setError(`Engine No required for VIN ${v.vin || '(empty)'}.`);
+      if (!v.make.trim())            return setError(`Make required for VIN ${v.vin || '(empty)'}.`);
       if (!v.rto_office_code.trim()) return setError(`RTO Office Code required for VIN ${v.vin}.`);
-      if (!v.rto_state.trim())   return setError(`RTO State required for VIN ${v.vin}.`);
-      if (v.products.length === 0) return setError(`Select at least one product for VIN ${v.vin}.`);
+      if (!v.rto_state.trim())       return setError(`RTO State required for VIN ${v.vin}.`);
+      if (v.products.length === 0)   return setError(`Select at least one product for VIN ${v.vin}.`);
     }
     setError('');
     setLoading(true);
@@ -116,46 +114,49 @@ export default function NewOrderModal({ onClose, onCreate }) {
     const tmlPayload = {
       order_id: 'TML-ORD-' + generateId().slice(0, 10).toUpperCase(),
       customer_details: {
-        name:           custName,
-        pan:            custPan,
-        gst:            custGst,
-        email:          custEmail,
-        contact_number: custContact,
+        name:           custName.trim(),
+        pan:            custPan.trim().toUpperCase(),
+        gst:            custGst.trim().toUpperCase(),
+        email:          custEmail.trim().toLowerCase(),
+        contact_number: formatPhone(custContact),
       },
       location_mappings: [{
         location: {
           id:       'LOC-' + generateId().slice(0, 6).toUpperCase(),
-          address:  locAddress,
-          city:     locCity,
-          pincode:  locPincode,
-          district: locDistrict,
-          state:    locState,
+          address:  locAddress.trim(),
+          city:     locCity.trim(),
+          pincode:  locPincode.trim(),
+          district: locDistrict.trim(),
+          state:    locState.trim(),
         },
         spoc: {
-          name:           spocName,
-          contact_number: spocPhone,
-          email:          spocEmail,
+          name:           spocName.trim(),
+          contact_number: formatPhone(spocPhone),
+          email:          spocEmail.trim().toLowerCase(),
         },
         vehicle_details: vehicles.map((v) => ({
-          vin:              v.vin,
-          registration_no:  v.registration_no,
-          engine_no:        v.engine_no,
-          model:            v.model,
-          make:             v.make,
-          variant:          v.variant,
-          mfg_year:         v.mfg_year,
-          fuel_type:        v.fuel_type,
-          emission_type:    v.emission_type,
-          rto_office_code:  v.rto_office_code,
-          rto_state:        v.rto_state,
-          products:         v.products,
+          vin:             v.vin.trim().toUpperCase(),
+          registration_no: v.registration_no.trim().toUpperCase(),
+          engine_no:       v.engine_no.trim().toUpperCase(),
+          model:           v.model.trim(),
+          make:            v.make.trim().toUpperCase(),
+          variant:         v.variant.trim(),
+          mfg_year:        String(v.mfg_year).trim(),
+          fuel_type:       v.fuel_type,
+          emission_type:   v.emission_type,
+          rto_office_code: v.rto_office_code.trim().toUpperCase(),
+          rto_state:       v.rto_state.trim().toUpperCase(),
+          products:        v.products.map((p) => ({
+            ...p,
+            duration_in_years: p.duration_in_years ? Number(p.duration_in_years) : null,
+          })),
         })),
       }],
     };
 
     // ── Build Supabase rows ────────────────────────────────────────────────
-    const baseId      = 'ORD-' + generateId().slice(0, 5);
-    const parsedTags  = tags.split(',').map((t) => t.trim()).filter(Boolean);
+    const baseId     = 'ORD-' + generateId().slice(0, 5);
+    const parsedTags = tags.split(',').map((t) => t.trim()).filter(Boolean);
     const historyEntry = {
       id:        'h-' + generateId(),
       action:    'Order Created',
@@ -170,12 +171,12 @@ export default function NewOrderModal({ onClose, onCreate }) {
       MODULES.map((module) => ({
         id:              baseId + '-' + v.vin.slice(-4) + '-' + module.slice(0, 3).toUpperCase(),
         title,
-        customer:        custName,
-        vin:             v.vin,
-        registration_no: v.registration_no,
-        engine_no:       v.engine_no,
-        model:           v.model,
-        make:            v.make,
+        customer:        custName.trim(),
+        vin:             v.vin.trim().toUpperCase(),
+        registration_no: v.registration_no.trim().toUpperCase(),
+        engine_no:       v.engine_no.trim().toUpperCase(),
+        model:           v.model.trim(),
+        make:            v.make.trim().toUpperCase(),
         priority,
         tags:            parsedTags,
         status:          'Pending',
@@ -189,7 +190,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
     setLoading(false);
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
@@ -199,7 +199,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
         style={{ background: '#fff', borderRadius: 16, padding: '24px 28px', width: 680, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 2 }}>Create Bulk Order</div>
         <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 18 }}>Fills all required TML API fields. Each vehicle gets rows across all 6 modules.</div>
 
@@ -318,7 +317,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
                   )}
                 </div>
 
-                {/* Row 1 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
                     <label style={labelStyle}>VIN *</label>
@@ -334,7 +332,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
                   </div>
                 </div>
 
-                {/* Row 2 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
                     <label style={labelStyle}>Make *</label>
@@ -350,8 +347,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
                   </div>
                 </div>
 
-                {/* Row 3 */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                   <div>
                     <label style={labelStyle}>Mfg. Year</label>
                     <input value={v.mfg_year} onChange={(e) => updateVehicle(v.id, 'mfg_year', e.target.value)} placeholder="2024" style={inputStyle} />
@@ -381,7 +377,6 @@ export default function NewOrderModal({ onClose, onCreate }) {
                   </div>
                 </div>
 
-                {/* Products */}
                 <div>
                   <label style={{ ...labelStyle, marginBottom: 6 }}>Products *</label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
