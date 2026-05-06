@@ -9,9 +9,9 @@ const MODULES = [
 
 export default function Sidebar({ activeModule, onSelect, totalOrders }) {
   return (
-    <div style={{ width: 220, background: '#fff', borderRight: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: '1px 0 4px rgba(0,0,0,0.04)' }}>
+    <div style={{ width: 220, background: '#0A1628', borderRight: 'none', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow: '2px 0 8px rgba(0,0,0,0.18)' }}>
       {/* Logo */}
-      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #F1F5F9' }}>
+      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 34, height: 34, background: '#2563EB', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
@@ -19,15 +19,15 @@ export default function Sidebar({ activeModule, onSelect, totalOrders }) {
             </svg>
           </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#0F172A', letterSpacing: -0.2 }}>OEM Tracker</div>
-            <div style={{ fontSize: 10, color: '#94A3B8', letterSpacing: 0.5 }}>TML SYSTEM</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#F1F5F9', letterSpacing: -0.2 }}>OEM Tracker</div>
+            <div style={{ fontSize: 10, color: '#64748B', letterSpacing: 0.5 }}>TML SYSTEM</div>
           </div>
         </div>
       </div>
 
       {/* Nav label */}
       <div style={{ padding: '16px 20px 8px' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: '#CBD5E1', letterSpacing: 1.2 }}>MODULES</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: '#334155', letterSpacing: 1.2 }}>MODULES</div>
       </div>
 
       {/* Nav items */}
@@ -41,8 +41,8 @@ export default function Sidebar({ activeModule, onSelect, totalOrders }) {
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: 10,
                 padding: '9px 12px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                background: active ? '#EFF6FF' : 'transparent',
-                color: active ? '#2563EB' : '#64748B',
+                background: active ? 'rgba(37,99,235,0.25)' : 'transparent',
+                color: active ? '#93C5FD' : '#64748B',
                 fontSize: 13, fontWeight: active ? 600 : 400,
                 marginBottom: 2, textAlign: 'left',
                 transition: 'all 0.15s ease',
@@ -54,7 +54,7 @@ export default function Sidebar({ activeModule, onSelect, totalOrders }) {
               </svg>
               {name}
               {active && (
-                <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: '#2563EB' }} />
+                <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: '#3B82F6' }} />
               )}
             </button>
           );
@@ -62,9 +62,9 @@ export default function Sidebar({ activeModule, onSelect, totalOrders }) {
       </nav>
 
       {/* Footer */}
-      <div style={{ padding: '16px 20px', borderTop: '1px solid #F1F5F9' }}>
-        <div style={{ fontSize: 11, color: '#94A3B8' }}>Active orders</div>
-        <div style={{ fontSize: 22, fontWeight: 700, color: '#0F172A', fontFamily: "'DM Mono', monospace", marginTop: 2 }}>{totalOrders}</div>
+      <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+        <div style={{ fontSize: 11, color: '#475569' }}>Active orders</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: '#F1F5F9', fontFamily: "'DM Mono', monospace", marginTop: 2 }}>{totalOrders}</div>
       </div>
     </div>
   );
