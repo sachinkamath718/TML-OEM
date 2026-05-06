@@ -6,7 +6,6 @@ import { createOrder } from './api';
 import Sidebar from './components/Sidebar';
 import KanbanColumn from './components/KanbanColumn';
 import MoveModal from './components/MoveModal';
-import HistoryModal from './components/HistoryModal';
 import DetailDrawer from './components/DetailDrawer';
 import BulkMoveModal from './components/BulkMoveModal';
 import NewOrderModal from './components/NewOrderModal';
@@ -19,11 +18,9 @@ export default function App() {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
 
-  // single ticket actions
   const [moveTarget, setMoveTarget]     = useState(null);
   const [detailOrder, setDetailOrder]   = useState(null);
 
-  // bulk selection
   const [selectedIds, setSelectedIds]   = useState(new Set());
   const [bulkMode, setBulkMode]         = useState(false);
   const [showBulkMove, setShowBulkMove] = useState(false);
@@ -61,7 +58,6 @@ export default function App() {
           setOrders((prev) => [payload.new, ...prev]);
         } else if (payload.eventType === 'UPDATE') {
           setOrders((prev) => prev.map((o) => o.id === payload.new.id ? payload.new : o));
-          // keep drawer in sync
           setDetailOrder((prev) => prev?.id === payload.new.id ? { ...prev, ...payload.new } : prev);
         } else if (payload.eventType === 'DELETE') {
           setOrders((prev) => prev.filter((o) => o.id !== payload.old.id));
@@ -130,14 +126,6 @@ export default function App() {
       setDetailOrder((prev) =>
         prev?.id === order.id ? { ...prev, status: targetCol, assignee: user.name, history: updatedHistory } : prev
       );
-
-      // Webhook stubs
-      if ((activeModule === 'Shipment' || activeModule === 'Installation') && targetCol === 'Completed') {
-        console.log(`[Webhook] ${activeModule} Completed → ${order.tracking_id}`);
-      }
-      if ((activeModule === 'AIS140' || activeModule === 'Mining') && (targetCol === 'In Process' || targetCol === 'Completed')) {
-        console.log(`[Webhook] ${activeModule} → ${targetCol} → ${order.tracking_id}`);
-      }
     } catch (err) {
       alert('Failed to update status. Please try again.');
     }
@@ -187,49 +175,37 @@ export default function App() {
   }
 
   // ─── Create ────────────────────────────────────────────────────────────────
+  async function handleCreate(tmlPayload, supabaseOrders) {
+    try {
+      // Step 1: Hit TML API
+      const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
+      if (tmlError) {
+        alert('TML API error: ' + tmlError);
+        return;
+      }
 
+      // Step 2: Merge TML tracking IDs into Supabase rows
+      const enrichedOrders = supabaseOrders.map((order) => {
+        const tmlVehicle = tmlData.find((t) => t.vin === order.vin);
+        return {
+          ...order,
+          tml_tracking_id:  tmlVehicle?.order_tracking_id || null,
+          ais140_ticket_no: tmlVehicle?.ais140_ticket_no  || null,
+          mining_ticket_no: tmlVehicle?.mining_ticket_no  || null,
+        };
+      });
 
-async function handleCreate(tmlPayload, supabaseOrders) {
-  try {
-    async function handleCreate(tmlPayload, supabaseOrders) {
-  try {
-    // Show payload in an alert so you can see it
-    alert('Sending payload:\n' + JSON.stringify(tmlPayload, null, 2));
+      // Step 3: Save to Supabase
+      const { data, error } = await supabase.from('orders').insert(enrichedOrders).select();
+      if (error) throw error;
 
-    const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
-    
-    if (tmlError) {
-      alert('TML Error: ' + tmlError);
-      return;
+      setOrders((prev) => [...(data || enrichedOrders), ...prev]);
+      setShowNewOrder(false);
+    } catch (err) {
+      alert('Failed to create order: ' + err.message);
     }
-    // ... rest of your code
   }
-}
-    // Step 1: Hit TML API
-    const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
-    if (tmlError) { alert('TML API error: ' + tmlError); return; }
 
-    // Step 2: Merge TML tracking IDs into Supabase rows
-    const enrichedOrders = supabaseOrders.map((order) => {
-      const tmlVehicle = tmlData.find((t) => t.vin === order.vin);
-      return {
-        ...order,
-        tml_tracking_id:   tmlVehicle?.order_tracking_id  || null,
-        ais140_ticket_no:  tmlVehicle?.ais140_ticket_no   || null,
-        mining_ticket_no:  tmlVehicle?.mining_ticket_no   || null,
-      };
-    });
-
-    // Step 3: Save to Supabase
-    const { data, error } = await supabase.from('orders').insert(enrichedOrders).select();
-    if (error) throw error;
-
-    setOrders((prev) => [...(data || enrichedOrders), ...prev]);
-    setShowNewOrder(false);
-  } catch (err) {
-    alert('Failed to create order: ' + err.message);
-  }
-}
   const moduleOrders = orders.filter((o) => o.module === activeModule);
   const inProcessCount = moduleOrders.filter((o) => o.status === 'In Process').length;
 
@@ -275,7 +251,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
 
           <div style={{ flex: 1 }} />
 
-          {/* Bulk action bar — appears when bulk mode is on */}
           {bulkMode && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, padding: '5px 12px' }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#1D4ED8' }}>
@@ -305,7 +280,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
             style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13, width: 240, outline: 'none', fontFamily: 'inherit', background: '#F8FAFC', color: '#0F172A' }}
           />
 
-          {/* Bulk toggle button */}
           <button
             onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
             style={{
@@ -346,7 +320,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
         </div>
       </div>
 
-      {/* Detail drawer — replaces HistoryModal for card clicks */}
       {detailOrder && (
         <DetailDrawer
           order={detailOrder}
@@ -355,7 +328,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
         />
       )}
 
-      {/* Single move modal */}
       {moveTarget && (
         <MoveModal
           order={moveTarget}
@@ -364,7 +336,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
         />
       )}
 
-      {/* Bulk move modal */}
       {showBulkMove && (
         <BulkMoveModal
           count={selectedIds.size}
@@ -373,7 +344,6 @@ async function handleCreate(tmlPayload, supabaseOrders) {
         />
       )}
 
-      {/* New order */}
       {showNewOrder && (
         <NewOrderModal
           onClose={() => setShowNewOrder(false)}
