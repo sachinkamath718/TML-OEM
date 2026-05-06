@@ -186,17 +186,35 @@ export default function App() {
   }
 
   // ─── Create ────────────────────────────────────────────────────────────────
-  async function handleCreate(newOrders) {
-    try {
-      const { data, error } = await supabase.from('orders').insert(newOrders).select();
-      if (error) throw error;
-      setOrders((prev) => [...(data || newOrders), ...prev]);
-      setShowNewOrder(false);
-    } catch (err) {
-      alert('Failed to create order. Please try again.');
-    }
-  }
+import { createOrder } from './api';
 
+async function handleCreate(tmlPayload, supabaseOrders) {
+  try {
+    // Step 1: Hit TML API
+    const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
+    if (tmlError) { alert('TML API error: ' + tmlError); return; }
+
+    // Step 2: Merge TML tracking IDs into Supabase rows
+    const enrichedOrders = supabaseOrders.map((order) => {
+      const tmlVehicle = tmlData.find((t) => t.vin === order.vin);
+      return {
+        ...order,
+        tml_tracking_id:   tmlVehicle?.order_tracking_id  || null,
+        ais140_ticket_no:  tmlVehicle?.ais140_ticket_no   || null,
+        mining_ticket_no:  tmlVehicle?.mining_ticket_no   || null,
+      };
+    });
+
+    // Step 3: Save to Supabase
+    const { data, error } = await supabase.from('orders').insert(enrichedOrders).select();
+    if (error) throw error;
+
+    setOrders((prev) => [...(data || enrichedOrders), ...prev]);
+    setShowNewOrder(false);
+  } catch (err) {
+    alert('Failed to create order: ' + err.message);
+  }
+}
   const moduleOrders = orders.filter((o) => o.module === activeModule);
   const inProcessCount = moduleOrders.filter((o) => o.status === 'In Process').length;
 
