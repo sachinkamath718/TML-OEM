@@ -1,125 +1,136 @@
 import { useState } from 'react';
-import { COLUMNS, COL_COLORS } from '../constants';
+import { COLUMNS } from '../constants';
+
+const MOVE_COLUMNS = COLUMNS.filter((c) => c !== 'Pending');
+
+const COL_COLORS = {
+  'In Process': '#3B82F6',
+  'Completed':  '#10B981',
+  'On Hold':    '#8B5CF6',
+  'Failed':     '#EF4444',
+};
+
+const inputStyle = {
+  width: '100%', padding: '9px 12px', borderRadius: 8,
+  border: '1px solid #1E293B', fontSize: 13, outline: 'none',
+  boxSizing: 'border-box', fontFamily: "'DM Sans', system-ui, sans-serif",
+  background: '#0F1117', color: '#E2E8F0',
+};
+
+const labelStyle = {
+  fontSize: 11, fontWeight: 600, color: '#64748B',
+  display: 'block', marginBottom: 6, letterSpacing: 0.5,
+};
 
 export default function MoveModal({ order, onClose, onMove }) {
-  const [selectedCol, setSelectedCol] = useState('');
+  const [targetCol, setTargetCol] = useState(MOVE_COLUMNS[0]);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
 
-  const available = COLUMNS.filter((c) => c !== order.column);
-
   function handleSubmit() {
-    if (!selectedCol) return setError('Please select a target column.');
-    if (!name.trim()) return setError('Updater name is required.');
-    if (!/^\d{10}$/.test(phone.replace(/\s/g, ''))) return setError('Valid 10-digit phone is required.');
-    if (!note.trim()) return setError('Please add a note for this transition.');
+    if (!name.trim()) return setError('Name is required.');
+    if (!phone.trim()) return setError('Phone is required.');
+    if (!note.trim()) return setError('Reason note is required.');
     setError('');
-    onMove({ targetCol: selectedCol, user: { name, phone, role }, note });
+    onMove({ targetCol, user: { name, phone, role }, note });
   }
-
-  const inputStyle = {
-    width: '100%',
-    padding: '8px 12px',
-    borderRadius: 8,
-    border: '1px solid #D1D5DB',
-    fontSize: 13,
-    outline: 'none',
-    boxSizing: 'border-box',
-    fontFamily: 'Inter, system-ui, sans-serif',
-  };
 
   return (
     <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(15,23,42,0.55)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999,
-      }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, backdropFilter: 'blur(4px)' }}
       onClick={onClose}
     >
       <div
-        style={{
-          background: '#fff', borderRadius: 16, padding: '28px 32px',
-          width: 480, maxWidth: '92vw',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
-        }}
+        style={{ background: '#141820', borderRadius: 16, padding: '28px 32px', width: 480, maxWidth: '94vw', boxShadow: '0 25px 60px rgba(0,0,0,0.5)', border: '1px solid #1E293B' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, color: '#6366F1', fontWeight: 700, letterSpacing: 0.5, marginBottom: 4 }}>{order.id}</div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#111827' }}>Move Ticket</div>
-          <div style={{ fontSize: 13, color: '#6B7280', marginTop: 2 }}>
-            Currently in <strong>{order.column}</strong>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#F1F5F9' }}>Move Ticket</div>
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+              {order.vin || order.id}
+            </div>
           </div>
+          <button onClick={onClose} style={{ background: '#1E293B', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#64748B', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+
+        {/* Current → Target */}
+        <div style={{ background: '#0F1117', borderRadius: 8, padding: '10px 14px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, color: '#475569' }}>FROM</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#94A3B8', background: '#1E293B', padding: '2px 10px', borderRadius: 20 }}>{order.status}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#334155" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <span style={{ fontSize: 11, fontWeight: 600, color: COL_COLORS[targetCol] || '#F1F5F9', background: '#1E293B', padding: '2px 10px', borderRadius: 20 }}>{targetCol}</span>
         </div>
 
         {/* Target column */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Move to *</label>
+        <div style={{ marginBottom: 16 }}>
+          <label style={labelStyle}>MOVE TO *</label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {available.map((col) => (
-              <button
-                key={col}
-                onClick={() => setSelectedCol(col)}
-                style={{
-                  fontSize: 12, padding: '6px 14px', borderRadius: 8,
-                  border: `1.5px solid ${selectedCol === col ? COL_COLORS[col].border : '#E5E7EB'}`,
-                  background: selectedCol === col ? COL_COLORS[col].bg : '#F9FAFB',
-                  color: selectedCol === col ? COL_COLORS[col].text : '#6B7280',
-                  cursor: 'pointer', fontWeight: selectedCol === col ? 700 : 400,
-                  transition: 'all 0.12s',
-                }}
-              >
-                {col}
-              </button>
-            ))}
+            {MOVE_COLUMNS.map((col) => {
+              const active = targetCol === col;
+              const color = COL_COLORS[col] || '#3B82F6';
+              return (
+                <button
+                  key={col}
+                  onClick={() => setTargetCol(col)}
+                  style={{
+                    padding: '7px 14px', borderRadius: 8,
+                    border: `1px solid ${active ? color : '#1E293B'}`,
+                    background: active ? color + '18' : 'transparent',
+                    color: active ? color : '#64748B',
+                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    transition: 'all 0.12s',
+                  }}
+                >
+                  {col}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Name + Phone */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        {/* User fields */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Your Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rohan Sharma" style={inputStyle} />
+            <label style={labelStyle}>YOUR NAME *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" style={inputStyle} />
           </div>
           <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Phone *</label>
+            <label style={labelStyle}>PHONE *</label>
             <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10-digit mobile" style={inputStyle} />
           </div>
-        </div>
-
-        {/* Role */}
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Role / Department</label>
-          <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Logistics Manager" style={inputStyle} />
-        </div>
-
-        {/* Note */}
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Note / Reason *</label>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Describe the reason for this status change..."
-            rows={3}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>ROLE</label>
+            <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Field Engineer, Logistics" style={inputStyle} />
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>REASON / NOTE *</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Describe the reason for this status change..."
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
+            />
+          </div>
         </div>
 
         {error && (
-          <div style={{ fontSize: 12, color: '#DC2626', marginBottom: 12, background: '#FEF2F2', padding: '8px 12px', borderRadius: 6 }}>
+          <div style={{ fontSize: 12, color: '#FCA5A5', marginBottom: 14, background: '#450A0A', padding: '10px 14px', borderRadius: 8, border: '1px solid #7F1D1D' }}>
             {error}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: 13, cursor: 'pointer', color: '#374151' }}>
+          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #1E293B', background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#64748B', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
             Cancel
           </button>
-          <button onClick={handleSubmit} style={{ padding: '9px 22px', borderRadius: 8, border: 'none', background: '#4F46E5', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          <button onClick={handleSubmit} style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
             Confirm Move
           </button>
         </div>
