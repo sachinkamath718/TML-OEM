@@ -66,7 +66,7 @@ export async function createOrder(payload) {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    if (!ok) return { data: null, error: json?.message || 'Order creation failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -78,7 +78,7 @@ export async function getOrderStatus(trackingId) {
     const { ok, json } = await apiFetch(
       `/order/status?trackingId=${encodeURIComponent(trackingId)}`
     );
-    if (!ok) return { data: null, error: json?.message || 'Status fetch failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -91,7 +91,7 @@ export async function updateSpoc(payload) {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
-    if (!ok) return { data: null, error: json?.message || 'SPOC update failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -104,7 +104,7 @@ export async function createAIS140Request(vehicles) {
       method: 'POST',
       body: JSON.stringify(vehicles),
     });
-    if (!ok) return { data: null, error: json?.message || 'AIS140 request failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -117,7 +117,7 @@ export async function createMiningRequest(vehicles) {
       method: 'POST',
       body: JSON.stringify(vehicles),
     });
-    if (!ok) return { data: null, error: json?.message || 'Mining request failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -130,7 +130,7 @@ export async function getAIS140TicketStatus(tickets) {
       method: 'POST',
       body: JSON.stringify({ err: null, data: tickets }),
     });
-    if (!ok) return { data: null, error: json?.message || 'AIS140 status fetch failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -143,7 +143,7 @@ export async function getMiningTicketStatus(tickets) {
       method: 'POST',
       body: JSON.stringify({ err: null, data: tickets }),
     });
-    if (!ok) return { data: null, error: json?.message || 'Mining status fetch failed' };
+    if (!ok) return { data: null, error: JSON.stringify(json) };
     return { data: json.data, error: null };
   } catch (e) {
     return { data: null, error: e.message };
