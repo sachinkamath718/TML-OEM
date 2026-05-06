@@ -1,236 +1,352 @@
-/**
- * TML OEM API — Service Layer
- * Base URL: https://tml-oem-api.vercel.app
- *
- * All functions return { data, error }.
- * Token is stored in memory (auto-refreshed on 401).
- */
+import { useState, useEffect } from 'react';
+import { COLUMNS } from './constants';
+import { generateId } from './utils';
 
-const BASE_URL = 'https://tml-oem-api.vercel.app';
-const CLIENT_ID = 'tml-client-id';
-const CLIENT_SECRET = 'tml-client-secret';
+import Sidebar from './components/Sidebar';
+import KanbanColumn from './components/KanbanColumn';
+import MoveModal from './components/MoveModal';
+import HistoryModal from './components/HistoryModal';
+import DetailDrawer from './components/DetailDrawer';
+import BulkMoveModal from './components/BulkMoveModal';
+import NewOrderModal from './components/NewOrderModal';
 
-// ─── Token cache ──────────────────────────────────────────────────────────────
-let _token = null;
-let _tokenExpiresAt = 0; // epoch ms
+import { supabase } from './supabaseClient';
 
-async function getToken() {
-  if (_token && Date.now() < _tokenExpiresAt - 60_000) return _token;
+export default function App() {
+  const [activeModule, setActiveModule] = useState('Orders');
+  const [orders, setOrders]             = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
 
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    grant_type: 'client_credentials',
-  });
+  // single ticket actions
+  const [moveTarget, setMoveTarget]     = useState(null);
+  const [detailOrder, setDetailOrder]   = useState(null);
 
-  const res = await fetch(`${BASE_URL}/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
+  // bulk selection
+  const [selectedIds, setSelectedIds]   = useState(new Set());
+  const [bulkMode, setBulkMode]         = useState(false);
+  const [showBulkMove, setShowBulkMove] = useState(false);
 
-  const json = await res.json();
-  const tok = json.access_token || json?.data?.access_token;
-  if (!tok) throw new Error('Token fetch failed: ' + JSON.stringify(json));
+  const [showNewOrder, setShowNewOrder] = useState(false);
+  const [search, setSearch]             = useState('');
 
-  _token = tok;
-  // Token valid for 12 h per spec
-  _tokenExpiresAt = Date.now() + 12 * 60 * 60 * 1000;
-  return _token;
-}
+  // ─── Fetch ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    async function fetchOrders() {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        setOrders(data || []);
+      } catch (err) {
+        setError('Failed to load orders. Please check your Supabase connection.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchOrders();
+  }, []);
 
-// ─── Base fetch with auto-auth ────────────────────────────────────────────────
-async function apiFetch(path, options = {}, retry = true) {
-  const token = await getToken();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    },
-  });
+  // ─── Realtime ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel('orders-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setOrders((prev) => [payload.new, ...prev]);
+        } else if (payload.eventType === 'UPDATE') {
+          setOrders((prev) => prev.map((o) => o.id === payload.new.id ? payload.new : o));
+          // keep drawer in sync
+          setDetailOrder((prev) => prev?.id === payload.new.id ? { ...prev, ...payload.new } : prev);
+        } else if (payload.eventType === 'DELETE') {
+          setOrders((prev) => prev.filter((o) => o.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
-  if (res.status === 401 && retry) {
-    _token = null; // force refresh
-    return apiFetch(path, options, false);
-  }
-
-  const json = await res.json();
-  return { ok: res.ok, status: res.status, json };
-}
-
-// ─── 1. Generate Token (exposed for manual refresh UI) ────────────────────────
-export async function generateToken() {
-  try {
-    _token = null;
-    const tok = await getToken();
-    return { data: tok, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-// ─── 2. Order Creation ────────────────────────────────────────────────────────
-/**
- * payload shape:
- * {
- *   order_id: string,
- *   customer_details: { name, pan, gst, email, contact_number },
- *   location_mappings: [
- *     {
- *       location: { id, address, city, pincode, district, state },
- *       spoc: { name, contact_number, email },
- *       vehicle_details: [
- *         {
- *           vin, registration_no, engine_no, model, make, variant,
- *           mfg_year, fuel_type, emission_type, rto_office_code, rto_state,
- *           products: [{ name, duration_in_years, metadata }]
- *         }
- *       ]
- *     }
- *   ]
- * }
- *
- * Response data: [{ vin, order_tracking_id, ais140_ticket_no, mining_ticket_no }]
- */
-export async function createOrder(payload) {
-  try {
-    const { ok, json } = await apiFetch('/order', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    if (!ok) return { data: null, error: json?.message || 'Order creation failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-// ─── 3. Order Status ──────────────────────────────────────────────────────────
-/**
- * trackingId: any vehicle's order_tracking_id from the order
- * Returns status for ALL vehicles in that order.
- * Note: updated_at is Unix epoch milliseconds (IST).
- */
-export async function getOrderStatus(trackingId) {
-  try {
-    const { ok, json } = await apiFetch(
-      `/order/status?trackingId=${encodeURIComponent(trackingId)}`
+  // ─── Filtered list ─────────────────────────────────────────────────────────
+  const filteredOrders = orders
+    .filter((o) => o.module === activeModule)
+    .filter((o) =>
+      [o.vin, o.tracking_id, o.customer, o.id, o.title]
+        .filter(Boolean)
+        .some((f) => f.toLowerCase().includes(search.toLowerCase()))
     );
-    if (!ok) return { data: null, error: json?.message || 'Status fetch failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
 
-// ─── 4. SPOC Update ───────────────────────────────────────────────────────────
-/**
- * payload: { tracking_id, name, contact_no, email }
- */
-export async function updateSpoc(payload) {
-  try {
-    const { ok, json } = await apiFetch('/order/fitment/spoc', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
+  // ─── Selection helpers ─────────────────────────────────────────────────────
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
     });
-    if (!ok) return { data: null, error: json?.message || 'SPOC update failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
   }
-}
 
-// ─── 5. AIS140 Cert Request ───────────────────────────────────────────────────
-/**
- * vehicles: array of:
- * {
- *   vehicle_details: {
- *     vin, iccid, device_imei, device_make, device_model, engine_no,
- *     rto_office_code, rto_state, sim_expiry_date,
- *     certificate_validity_duration_in_year
- *   },
- *   customer_details: { name, city, state, mobile_no }
- * }
- *
- * Response data: [{ vin, ticket_no, status, validation_errors? }]
- * Calling again for same VIN creates a NEW ticket (renewal).
- */
-export async function createAIS140Request(vehicles) {
-  try {
-    const { ok, json } = await apiFetch('/ais140', {
-      method: 'POST',
-      body: JSON.stringify(vehicles),
+  function selectAll(ids, select) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (select ? next.add(id) : next.delete(id)));
+      return next;
     });
-    if (!ok) return { data: null, error: json?.message || 'AIS140 request failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
   }
-}
 
-// ─── 6. Mining Cert Request ───────────────────────────────────────────────────
-/**
- * vehicles: array of:
- * {
- *   vehicle_details: {
- *     vin, iccid, device_imei, device_make, device_model, engine_no,
- *     department, sim_expiry_date, duration_in_year
- *   },
- *   customer_details: { name, city, state, mobile_no }
- * }
- *
- * Response data: [{ vin, mining_ticket_no, status, validation_errors? }]
- */
-export async function createMiningRequest(vehicles) {
-  try {
-    const { ok, json } = await apiFetch('/mining', {
-      method: 'POST',
-      body: JSON.stringify(vehicles),
-    });
-    if (!ok) return { data: null, error: json?.message || 'Mining request failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
+  function exitBulkMode() {
+    setSelectedIds(new Set());
+    setBulkMode(false);
   }
-}
 
-// ─── 7. AIS140 Ticket Status ──────────────────────────────────────────────────
-/**
- * tickets: [{ vin_no, ticket_no }]
- *   ticket_no: null  → returns ALL tickets for that VIN (newest first)
- *   ticket_no: "AIS-TKT-XXXXXXXXXX" → returns that specific ticket
- */
-export async function getAIS140TicketStatus(tickets) {
-  try {
-    const { ok, json } = await apiFetch('/ais140/ticket-status', {
-      method: 'POST',
-      body: JSON.stringify({ err: null, data: tickets }),
-    });
-    if (!ok) return { data: null, error: json?.message || 'AIS140 status fetch failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
+  // ─── Single move ───────────────────────────────────────────────────────────
+  async function handleMove({ targetCol, user, note }) {
+    const order = orders.find((o) => o.id === moveTarget.id);
+    if (!order) return;
 
-// ─── 8. Mining Ticket Status ──────────────────────────────────────────────────
-/**
- * tickets: [{ vin_no, ticket_no }]
- *   ticket_no: null  → returns ALL tickets for that VIN (newest first)
- *   ticket_no: "MIN-TKT-XXXXXXXXXX" → returns that specific ticket
- */
-export async function getMiningTicketStatus(tickets) {
-  try {
-    const { ok, json } = await apiFetch('/mining/ticket-status', {
-      method: 'POST',
-      body: JSON.stringify({ err: null, data: tickets }),
-    });
-    if (!ok) return { data: null, error: json?.message || 'Mining status fetch failed' };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
+    const newEntry = {
+      id:        'h-' + generateId(),
+      action:    'Status Changed',
+      from:      order.status,
+      to:        targetCol,
+      timestamp: new Date().toISOString(),
+      user, note,
+    };
+    const updatedHistory = [...(order.history || []), newEntry];
+
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: targetCol, assignee: user.name, history: updatedHistory })
+        .eq('id', order.id);
+      if (error) throw error;
+
+      setOrders((prev) => prev.map((o) =>
+        o.id === order.id ? { ...o, status: targetCol, assignee: user.name, history: updatedHistory } : o
+      ));
+      setDetailOrder((prev) =>
+        prev?.id === order.id ? { ...prev, status: targetCol, assignee: user.name, history: updatedHistory } : prev
+      );
+
+      // Webhook stubs
+      if ((activeModule === 'Shipment' || activeModule === 'Installation') && targetCol === 'Completed') {
+        console.log(`[Webhook] ${activeModule} Completed → ${order.tracking_id}`);
+      }
+      if ((activeModule === 'AIS140' || activeModule === 'Mining') && (targetCol === 'In Process' || targetCol === 'Completed')) {
+        console.log(`[Webhook] ${activeModule} → ${targetCol} → ${order.tracking_id}`);
+      }
+    } catch (err) {
+      alert('Failed to update status. Please try again.');
+    }
+    setMoveTarget(null);
   }
+
+  // ─── Bulk move ─────────────────────────────────────────────────────────────
+  async function handleBulkMove({ targetCol, user, note }) {
+    const ids = [...selectedIds];
+    const now = new Date().toISOString();
+
+    const updates = ids.map((id) => {
+      const order = orders.find((o) => o.id === id);
+      if (!order) return null;
+      return {
+        id,
+        status:   targetCol,
+        assignee: user.name,
+        history:  [...(order.history || []), {
+          id:        'h-' + generateId(),
+          action:    'Status Changed',
+          from:      order.status,
+          to:        targetCol,
+          timestamp: now,
+          user, note,
+        }],
+      };
+    }).filter(Boolean);
+
+    try {
+      await Promise.all(
+        updates.map(({ id, status, assignee, history }) =>
+          supabase.from('orders').update({ status, assignee, history }).eq('id', id)
+        )
+      );
+      setOrders((prev) =>
+        prev.map((o) => {
+          const u = updates.find((x) => x.id === o.id);
+          return u ? { ...o, ...u } : o;
+        })
+      );
+      exitBulkMode();
+      setShowBulkMove(false);
+    } catch (err) {
+      alert('Bulk update failed. Please try again.');
+    }
+  }
+
+  // ─── Create ────────────────────────────────────────────────────────────────
+  async function handleCreate(newOrders) {
+    try {
+      const { data, error } = await supabase.from('orders').insert(newOrders).select();
+      if (error) throw error;
+      setOrders((prev) => [...(data || newOrders), ...prev]);
+      setShowNewOrder(false);
+    } catch (err) {
+      alert('Failed to create order. Please try again.');
+    }
+  }
+
+  const moduleOrders = orders.filter((o) => o.module === activeModule);
+  const inProcessCount = moduleOrders.filter((o) => o.status === 'In Process').length;
+
+  // ─── Loading ───────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif", color: '#64748B', fontSize: 14 }}>
+        Loading orders…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <div style={{ background: '#fff', border: '1px solid #FCA5A5', borderRadius: 12, padding: '24px 32px', color: '#DC2626', fontSize: 13, maxWidth: 400, textAlign: 'center' }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Connection Error</div>
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#F8FAFC', display: 'flex' }}>
+      <Sidebar
+        activeModule={activeModule}
+        onSelect={(m) => { setActiveModule(m); exitBulkMode(); }}
+        totalOrders={moduleOrders.length}
+      />
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+
+        {/* ── Top bar ── */}
+        <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '13px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
+              {moduleOrders.length} total · {inProcessCount} in progress
+            </div>
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Bulk action bar — appears when bulk mode is on */}
+          {bulkMode && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, padding: '5px 12px' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#1D4ED8' }}>
+                {selectedIds.size} selected
+              </span>
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={() => setShowBulkMove(true)}
+                  style={{ fontSize: 12, padding: '4px 12px', borderRadius: 7, border: 'none', background: '#2563EB', color: '#fff', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  Move Selected →
+                </button>
+              )}
+              <button
+                onClick={exitBulkMode}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 7, border: '1px solid #BFDBFE', background: '#fff', color: '#2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search orders, IDs, customers…"
+            style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13, width: 240, outline: 'none', fontFamily: 'inherit', background: '#F8FAFC', color: '#0F172A' }}
+          />
+
+          {/* Bulk toggle button */}
+          <button
+            onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
+            style={{
+              padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1.5px solid ${bulkMode ? '#2563EB' : '#E2E8F0'}`,
+              background: bulkMode ? '#EFF6FF' : '#F8FAFC',
+              color: bulkMode ? '#2563EB' : '#64748B',
+            }}
+          >
+            ☑ Bulk
+          </button>
+
+          <button
+            onClick={() => setShowNewOrder(true)}
+            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            + New Order
+          </button>
+        </div>
+
+        {/* ── Kanban board ── */}
+        <div style={{ flex: 1, overflowX: 'auto', padding: '20px 24px' }}>
+          <div style={{ display: 'flex', gap: 14, minWidth: 900 }}>
+            {COLUMNS.map((col) => (
+              <KanbanColumn
+                key={col}
+                col={col}
+                orders={filteredOrders.filter((o) => o.status === col)}
+                onMoveClick={setMoveTarget}
+                onHistoryClick={setDetailOrder}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+                onSelectAll={selectAll}
+                bulkMode={bulkMode}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Detail drawer — replaces HistoryModal for card clicks */}
+      {detailOrder && (
+        <DetailDrawer
+          order={detailOrder}
+          onClose={() => setDetailOrder(null)}
+          onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }}
+        />
+      )}
+
+      {/* Single move modal */}
+      {moveTarget && (
+        <MoveModal
+          order={moveTarget}
+          onClose={() => setMoveTarget(null)}
+          onMove={handleMove}
+        />
+      )}
+
+      {/* Bulk move modal */}
+      {showBulkMove && (
+        <BulkMoveModal
+          count={selectedIds.size}
+          onClose={() => setShowBulkMove(false)}
+          onConfirm={handleBulkMove}
+        />
+      )}
+
+      {/* New order */}
+      {showNewOrder && (
+        <NewOrderModal
+          onClose={() => setShowNewOrder(false)}
+          onCreate={handleCreate}
+        />
+      )}
+    </div>
+  );
 }
