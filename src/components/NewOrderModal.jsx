@@ -3,14 +3,16 @@ import { generateId, generateTrackingId } from '../utils';
 
 const MODULES = ['Orders', 'Shipment', 'Delivery', 'Installation', 'AIS140', 'Mining'];
 
+const emptyVehicle = () => ({ id: generateId(), vin: '', registration_no: '', model: '' });
+
 export default function NewOrderModal({ onClose, onCreate }) {
   const [title, setTitle] = useState('');
   const [customer, setCustomer] = useState('');
-  const [vin, setVin] = useState('');
   const [priority, setPriority] = useState('Medium');
   const [tags, setTags] = useState('');
   const [creatorName, setCreatorName] = useState('');
   const [creatorPhone, setCreatorPhone] = useState('');
+  const [vehicles, setVehicles] = useState([emptyVehicle()]);
   const [error, setError] = useState('');
 
   const inputStyle = {
@@ -19,16 +21,32 @@ export default function NewOrderModal({ onClose, onCreate }) {
     boxSizing: 'border-box', fontFamily: 'Inter, system-ui, sans-serif',
   };
 
+  function updateVehicle(id, field, value) {
+    setVehicles((prev) => prev.map((v) => v.id === id ? { ...v, [field]: value } : v));
+  }
+
+  function addVehicle() {
+    setVehicles((prev) => [...prev, emptyVehicle()]);
+  }
+
+  function removeVehicle(id) {
+    if (vehicles.length === 1) return; // always keep at least one
+    setVehicles((prev) => prev.filter((v) => v.id !== id));
+  }
+
   function handleCreate() {
     if (!title.trim()) return setError('Order title required.');
     if (!customer.trim()) return setError('Customer name required.');
-    if (!vin.trim()) return setError('VIN required.');
     if (!creatorName.trim()) return setError('Creator name required.');
     if (!creatorPhone.trim()) return setError('Creator phone required.');
+    for (const v of vehicles) {
+      if (!v.vin.trim()) return setError(`VIN is required for all vehicles.`);
+    }
     setError('');
 
     const trackingId = generateTrackingId();
     const baseId = 'ORD-' + generateId().slice(0, 5);
+    const parsedTags = tags.split(',').map((t) => t.trim()).filter(Boolean);
 
     const historyEntry = {
       id: 'h-' + generateId(),
@@ -37,23 +55,27 @@ export default function NewOrderModal({ onClose, onCreate }) {
       to: 'Pending',
       timestamp: new Date().toISOString(),
       user: { name: creatorName, phone: creatorPhone, role: '' },
-      note: 'New order created and placed in Pending',
+      note: `Bulk order created with ${vehicles.length} vehicle(s)`,
     };
 
-    // Create one row per module, all starting as Pending
-    const orders = MODULES.map((module) => ({
-      id: baseId + '-' + module.slice(0, 3).toUpperCase(),
-      tracking_id: trackingId,
-      title,
-      customer,
-      vin,
-      priority,
-      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-      status: 'Pending',
-      assignee: null,
-      module,
-      history: [historyEntry],
-    }));
+    // One set of module rows per vehicle
+    const orders = vehicles.flatMap((vehicle) =>
+      MODULES.map((module) => ({
+        id: baseId + '-' + vehicle.vin.slice(-4) + '-' + module.slice(0, 3).toUpperCase(),
+        tracking_id: trackingId,
+        title,
+        customer,
+        vin: vehicle.vin,
+        registration_no: vehicle.registration_no,
+        model: vehicle.model,
+        priority,
+        tags: parsedTags,
+        status: 'Pending',
+        assignee: null,
+        module,
+        history: [historyEntry],
+      }))
+    );
 
     onCreate(orders);
   }
@@ -70,19 +92,21 @@ export default function NewOrderModal({ onClose, onCreate }) {
       <div
         style={{
           background: '#fff', borderRadius: 16, padding: '28px 32px',
-          width: 520, maxWidth: '94vw',
+          width: 600, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto',
           boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 4 }}>
-          Create New Order
+          Create Bulk Order
         </div>
         <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 18 }}>
-          This will create a Pending ticket in all 6 modules automatically.
+          Add multiple vehicles under one order. Each vehicle gets its own tracking row across all 6 modules.
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        {/* Order Details */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Order Title *</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Toyota Fortuner Batch 3" style={inputStyle} />
@@ -97,16 +121,91 @@ export default function NewOrderModal({ onClose, onCreate }) {
               {['High', 'Medium', 'Low'].map((p) => <option key={p}>{p}</option>)}
             </select>
           </div>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>VIN *</label>
-            <input value={vin} onChange={(e) => setVin(e.target.value)} placeholder="17-char VIN" style={inputStyle} />
-          </div>
-          <div>
+          <div style={{ gridColumn: '1 / -1' }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Tags (comma-separated)</label>
             <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Fleet, GPS, EV" style={inputStyle} />
           </div>
         </div>
 
+        {/* Vehicles Section */}
+        <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>Vehicles</div>
+              <div style={{ fontSize: 11, color: '#9CA3AF' }}>{vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''} added</div>
+            </div>
+            <button
+              onClick={addVehicle}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px', borderRadius: 8,
+                border: '1px dashed #6366F1', background: '#EEF2FF',
+                color: '#4F46E5', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              + Add Vehicle
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {vehicles.map((v, idx) => (
+              <div
+                key={v.id}
+                style={{
+                  background: '#F9FAFB', borderRadius: 10, padding: '12px 14px',
+                  border: '1px solid #E5E7EB', position: 'relative',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#6366F1' }}>Vehicle {idx + 1}</div>
+                  {vehicles.length > 1 && (
+                    <button
+                      onClick={() => removeVehicle(v.id)}
+                      style={{
+                        background: '#FEF2F2', border: '1px solid #FECACA',
+                        color: '#DC2626', borderRadius: 6, padding: '3px 10px',
+                        fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>VIN *</label>
+                    <input
+                      value={v.vin}
+                      onChange={(e) => updateVehicle(v.id, 'vin', e.target.value)}
+                      placeholder="17-char VIN"
+                      style={{ ...inputStyle, fontSize: 12 }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Reg. Number</label>
+                    <input
+                      value={v.registration_no}
+                      onChange={(e) => updateVehicle(v.id, 'registration_no', e.target.value)}
+                      placeholder="MH12AB1234"
+                      style={{ ...inputStyle, fontSize: 12 }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Model</label>
+                    <input
+                      value={v.model}
+                      onChange={(e) => updateVehicle(v.id, 'model', e.target.value)}
+                      placeholder="e.g. Fortuner"
+                      style={{ ...inputStyle, fontSize: 12 }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Created By */}
         <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 14, marginBottom: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 10 }}>Created By</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -138,7 +237,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
             onClick={handleCreate}
             style={{ padding: '9px 22px', borderRadius: 8, border: 'none', background: '#4F46E5', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
-            Create Order
+            Create Order ({vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''})
           </button>
         </div>
       </div>
