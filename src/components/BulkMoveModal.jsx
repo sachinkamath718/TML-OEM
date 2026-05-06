@@ -4,17 +4,17 @@ import { COLUMNS } from '../constants';
 const MOVE_COLUMNS = COLUMNS.filter((c) => c !== 'Pending');
 
 const COL_COLORS = {
-  'In Process': '#3B82F6',
-  'Completed':  '#10B981',
-  'On Hold':    '#8B5CF6',
-  'Failed':     '#EF4444',
+  'In Process': '#2563EB',
+  'Completed':  '#059669',
+  'On Hold':    '#7C3AED',
+  'Failed':     '#DC2626',
 };
 
 const inputStyle = {
   width: '100%', padding: '9px 12px', borderRadius: 8,
-  border: '1px solid #1E293B', fontSize: 13, outline: 'none',
+  border: '1px solid #E2E8F0', fontSize: 13, outline: 'none',
   boxSizing: 'border-box', fontFamily: "'DM Sans', system-ui, sans-serif",
-  background: '#0F1117', color: '#E2E8F0',
+  background: '#F8FAFC', color: '#0F172A',
 };
 
 const labelStyle = {
@@ -43,39 +43,37 @@ export default function BulkMoveModal({ count, onClose, onMove }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, backdropFilter: 'blur(4px)' }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, backdropFilter: 'blur(4px)' }}
       onClick={onClose}
     >
       <div
-        style={{ background: '#141820', borderRadius: 16, padding: '28px 32px', width: 480, maxWidth: '94vw', boxShadow: '0 25px 60px rgba(0,0,0,0.5)', border: '1px solid #1E293B' }}
+        style={{ background: '#fff', borderRadius: 16, padding: '28px 32px', width: 480, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', border: '1px solid #E2E8F0' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#F1F5F9' }}>Bulk Move</div>
-            <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
-              Moving <span style={{ color: '#60A5FA', fontWeight: 600 }}>{count} ticket{count !== 1 ? 's' : ''}</span> to a new status
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A' }}>Bulk Move</div>
+            <div style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>
+              Moving <span style={{ color: '#2563EB', fontWeight: 600 }}>{count} ticket{count !== 1 ? 's' : ''}</span> to a new status
             </div>
           </div>
-          <button onClick={onClose} style={{ background: '#1E293B', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#64748B', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          <button onClick={onClose} style={{ background: '#F1F5F9', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#64748B', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
-        {/* Target column selector */}
         <div style={{ marginBottom: 18 }}>
           <label style={labelStyle}>MOVE TO *</label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {MOVE_COLUMNS.map((col) => {
               const active = targetCol === col;
-              const color = COL_COLORS[col] || '#3B82F6';
+              const color = COL_COLORS[col] || '#2563EB';
               return (
                 <button
                   key={col}
                   onClick={() => setTargetCol(col)}
                   style={{
                     padding: '7px 16px', borderRadius: 8,
-                    border: `1px solid ${active ? color : '#1E293B'}`,
-                    background: active ? color + '18' : 'transparent',
+                    border: `1px solid ${active ? color : '#E2E8F0'}`,
+                    background: active ? color + '12' : '#F8FAFC',
                     color: active ? color : '#64748B',
                     fontSize: 12, fontWeight: 600, cursor: 'pointer',
                     fontFamily: "'DM Sans', system-ui, sans-serif",
@@ -89,7 +87,6 @@ export default function BulkMoveModal({ count, onClose, onMove }) {
           </div>
         </div>
 
-        {/* User fields */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelStyle}>YOUR NAME *</label>
@@ -116,19 +113,19 @@ export default function BulkMoveModal({ count, onClose, onMove }) {
         </div>
 
         {error && (
-          <div style={{ fontSize: 12, color: '#FCA5A5', marginBottom: 14, background: '#450A0A', padding: '10px 14px', borderRadius: 8, border: '1px solid #7F1D1D' }}>
+          <div style={{ fontSize: 12, color: '#DC2626', marginBottom: 14, background: '#FEF2F2', padding: '10px 14px', borderRadius: 8, border: '1px solid #FECACA' }}>
             {error}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #1E293B', background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#64748B', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #E2E8F0', background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#64748B', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={loading}
-            style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: loading ? '#1E3A5F' : '#3B82F6', color: '#fff', fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: "'DM Sans', system-ui, sans-serif" }}
+            style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: loading ? '#93C5FD' : '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: "'DM Sans', system-ui, sans-serif" }}
           >
             {loading ? 'Updating...' : `Move ${count} Ticket${count !== 1 ? 's' : ''}`}
           </button>
