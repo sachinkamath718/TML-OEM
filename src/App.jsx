@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { COLUMNS } from './constants';
 import { generateId } from './utils';
+import { createOrder } from './api';
 
 import Sidebar from './components/Sidebar';
 import KanbanColumn from './components/KanbanColumn';
@@ -186,7 +187,7 @@ export default function App() {
   }
 
   // ─── Create ────────────────────────────────────────────────────────────────
-import { createOrder } from './api';
+
 
 async function handleCreate(tmlPayload, supabaseOrders) {
   try {
