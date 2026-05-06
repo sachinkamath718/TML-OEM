@@ -11,8 +11,6 @@ import BulkMoveModal from './components/BulkMoveModal';
 
 import { supabase } from './supabaseClient';
 
-
-
 export default function App() {
   const [activeModule, setActiveModule] = useState('Orders');
   const [orders, setOrders] = useState([]);
@@ -22,8 +20,6 @@ export default function App() {
   const [historyTarget, setHistoryTarget] = useState(null);
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch] = useState('');
-
-  // Bulk select state
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [showBulkMove, setShowBulkMove] = useState(false);
@@ -61,20 +57,18 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, []);
 
-  // Reset bulk selection when module changes
   useEffect(() => {
     setBulkMode(false);
     setSelectedIds([]);
   }, [activeModule]);
 
   const moduleOrders = orders.filter((o) => o.module === activeModule);
-  const filteredOrders = moduleOrders.filter(
-    (o) =>
-      (o.vin || '').toLowerCase().includes(search.toLowerCase()) ||
-      (o.tracking_id || '').toLowerCase().includes(search.toLowerCase()) ||
-      (o.title || '').toLowerCase().includes(search.toLowerCase()) ||
-      (o.customer || '').toLowerCase().includes(search.toLowerCase()) ||
-      (o.id || '').toLowerCase().includes(search.toLowerCase())
+  const filteredOrders = moduleOrders.filter((o) =>
+    (o.vin || '').toLowerCase().includes(search.toLowerCase()) ||
+    (o.tracking_id || '').toLowerCase().includes(search.toLowerCase()) ||
+    (o.title || '').toLowerCase().includes(search.toLowerCase()) ||
+    (o.customer || '').toLowerCase().includes(search.toLowerCase()) ||
+    (o.id || '').toLowerCase().includes(search.toLowerCase())
   );
 
   function toggleSelect(id) {
@@ -84,7 +78,7 @@ export default function App() {
   }
 
   function toggleSelectAll(ids) {
-    const allSelected = ids.every((id) => selectedIds.includes(id));
+    const allSelected = ids.length > 0 && ids.every((id) => selectedIds.includes(id));
     if (allSelected) {
       setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
     } else {
@@ -97,7 +91,6 @@ export default function App() {
     setSelectedIds([]);
   }
 
-  // Single move
   async function handleMove({ targetCol, user, note }) {
     const order = orders.find((o) => o.id === moveTarget.id);
     if (!order) return;
@@ -128,11 +121,9 @@ export default function App() {
     setMoveTarget(null);
   }
 
-  // Bulk move
   async function handleBulkMove({ targetCol, user, note }) {
     const targets = orders.filter((o) => selectedIds.includes(o.id));
     const timestamp = new Date().toISOString();
-
     try {
       await Promise.all(
         targets.map(async (order) => {
@@ -151,10 +142,8 @@ export default function App() {
             .update({ status: targetCol, assignee: user.name, history: updatedHistory })
             .eq('id', order.id);
           if (error) throw error;
-          return { id: order.id, updatedHistory };
         })
       );
-
       setOrders((prev) =>
         prev.map((o) => {
           if (!selectedIds.includes(o.id)) return o;
@@ -170,7 +159,6 @@ export default function App() {
           return { ...o, status: targetCol, assignee: user.name, history: [...(o.history || []), newEntry] };
         })
       );
-
       setShowBulkMove(false);
       exitBulkMode();
     } catch (err) {
@@ -195,10 +183,10 @@ export default function App() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0F1117', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ width: 36, height: 36, border: '3px solid #1E293B', borderTop: '3px solid #3B82F6', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 14px' }} />
-          <div style={{ color: '#475569', fontSize: 13, letterSpacing: 0.5 }}>Loading workspace...</div>
+          <div style={{ width: 36, height: 36, border: '3px solid #E2E8F0', borderTop: '3px solid #2563EB', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 14px' }} />
+          <div style={{ color: '#94A3B8', fontSize: 13 }}>Loading workspace...</div>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -207,45 +195,44 @@ export default function App() {
 
   if (error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0F1117', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div style={{ background: '#1A1F2E', border: '1px solid #EF444430', borderRadius: 12, padding: '28px 36px', color: '#EF4444', fontSize: 14, maxWidth: 420, textAlign: 'center' }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: '#F1F5F9' }}>Connection Error</div>
-          <div style={{ color: '#94A3B8' }}>{error}</div>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <div style={{ background: '#fff', border: '1px solid #FEE2E2', borderRadius: 12, padding: '28px 36px', maxWidth: 420, textAlign: 'center' }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#111827' }}>Connection Error</div>
+          <div style={{ color: '#6B7280', fontSize: 13 }}>{error}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#0F1117', display: 'flex' }}>
+    <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#F1F5F9', display: 'flex' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 4px; }
-        input::placeholder, textarea::placeholder { color: #475569; }
-        input:focus, textarea:focus, select:focus { border-color: #3B82F6 !important; outline: none; }
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+        input::placeholder, textarea::placeholder { color: #94A3B8; }
+        input:focus, textarea:focus, select:focus { border-color: #2563EB !important; outline: none; box-shadow: 0 0 0 3px rgba(37,99,235,0.08) !important; }
       `}</style>
 
       <Sidebar activeModule={activeModule} onSelect={setActiveModule} totalOrders={moduleOrders.length} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Top bar */}
-        <div style={{ background: '#0A0D14', borderBottom: '1px solid #1E293B', padding: '0 28px', display: 'flex', alignItems: 'center', gap: 16, height: 60 }}>
+        <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '0 28px', display: 'flex', alignItems: 'center', gap: 16, height: 60, boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#F1F5F9', letterSpacing: -0.2 }}>{activeModule}</div>
-            <div style={{ fontSize: 10, color: '#475569', letterSpacing: 0.5 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: -0.2 }}>{activeModule}</div>
+            <div style={{ fontSize: 10, color: '#94A3B8', letterSpacing: 0.5 }}>
               {moduleOrders.length} TOTAL · {inProcessCount} IN PROGRESS
             </div>
           </div>
 
           <div style={{ flex: 1 }} />
 
-          {/* Bulk mode controls */}
           {bulkMode ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ fontSize: 12, color: '#60A5FA', fontWeight: 600 }}>
+              <div style={{ fontSize: 12, color: '#2563EB', fontWeight: 600, background: '#EFF6FF', padding: '4px 12px', borderRadius: 20 }}>
                 {selectedIds.length} selected
               </div>
               <button
@@ -253,16 +240,18 @@ export default function App() {
                 disabled={selectedIds.length === 0}
                 style={{
                   padding: '7px 16px', borderRadius: 8, border: 'none',
-                  background: selectedIds.length > 0 ? '#3B82F6' : '#1E293B',
-                  color: selectedIds.length > 0 ? '#fff' : '#475569',
-                  fontSize: 12, fontWeight: 600, cursor: selectedIds.length > 0 ? 'pointer' : 'not-allowed',
+                  background: selectedIds.length > 0 ? '#2563EB' : '#E2E8F0',
+                  color: selectedIds.length > 0 ? '#fff' : '#94A3B8',
+                  fontSize: 12, fontWeight: 600,
+                  cursor: selectedIds.length > 0 ? 'pointer' : 'not-allowed',
+                  fontFamily: "'DM Sans', system-ui, sans-serif",
                 }}
               >
                 Move Selected
               </button>
               <button
                 onClick={exitBulkMode}
-                style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #1E293B', background: 'transparent', color: '#64748B', fontSize: 12, cursor: 'pointer' }}
+                style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #E2E8F0', background: 'transparent', color: '#64748B', fontSize: 12, cursor: 'pointer', fontFamily: "'DM Sans', system-ui, sans-serif" }}
               >
                 Cancel
               </button>
@@ -270,20 +259,20 @@ export default function App() {
           ) : (
             <>
               <div style={{ position: 'relative' }}>
-                <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2">
+                <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
                   <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                 </svg>
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search VIN, tracking ID, customer..."
-                  style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8, borderRadius: 8, border: '1px solid #1E293B', background: '#141820', fontSize: 12, width: 260, color: '#F1F5F9', fontFamily: "'DM Sans', system-ui, sans-serif" }}
+                  style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8, borderRadius: 8, border: '1px solid #E2E8F0', background: '#F8FAFC', fontSize: 12, width: 260, color: '#0F172A', fontFamily: "'DM Sans', system-ui, sans-serif" }}
                 />
               </div>
 
               <button
                 onClick={() => setBulkMode(true)}
-                style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #1E3A5F', background: 'transparent', color: '#60A5FA', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#2563EB', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: "'DM Sans', system-ui, sans-serif" }}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="3" y="5" width="4" height="4" rx="1"/><rect x="3" y="11" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/>
@@ -294,7 +283,7 @@ export default function App() {
 
               <button
                 onClick={() => setShowNewOrder(true)}
-                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#3B82F6', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: "'DM Sans', system-ui, sans-serif" }}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
                 New Order
@@ -326,13 +315,7 @@ export default function App() {
       {moveTarget && <MoveModal order={moveTarget} onClose={() => setMoveTarget(null)} onMove={handleMove} />}
       {historyTarget && <HistoryModal order={historyTarget} onClose={() => setHistoryTarget(null)} />}
       {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)} onCreate={handleCreate} />}
-      {showBulkMove && (
-        <BulkMoveModal
-          count={selectedIds.length}
-          onClose={() => setShowBulkMove(false)}
-          onMove={handleBulkMove}
-        />
-      )}
+      {showBulkMove && <BulkMoveModal count={selectedIds.length} onClose={() => setShowBulkMove(false)} onMove={handleBulkMove} />}
     </div>
   );
 }
