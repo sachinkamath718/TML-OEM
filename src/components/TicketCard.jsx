@@ -1,80 +1,79 @@
-import TicketCard from './TicketCard';
+import { useState } from 'react';
 
-const COL_STYLES = {
-  'Pending':    { accent: '#F59E0B', bg: '#1C1810', badge: '#78350F', label: '#FCD34D' },
-  'In Process': { accent: '#3B82F6', bg: '#0F1E35', badge: '#1E3A5F', label: '#93C5FD' },
-  'Completed':  { accent: '#10B981', bg: '#0D1F18', badge: '#064E3B', label: '#6EE7B7' },
-  'On Hold':    { accent: '#8B5CF6', bg: '#160F2A', badge: '#2E1065', label: '#C4B5FD' },
-  'Failed':     { accent: '#EF4444', bg: '#1F0F0F', badge: '#450A0A', label: '#FCA5A5' },
+const PRIORITY_DOT = {
+  High:   '#EF4444',
+  Medium: '#F59E0B',
+  Low:    '#10B981',
 };
 
-export default function KanbanColumn({ col, orders, onMoveClick, onHistoryClick, bulkMode, selectedIds, onSelect, onSelectAll }) {
-  const style = COL_STYLES[col] || COL_STYLES['Pending'];
-  const colIds = orders.map((o) => o.id);
-  const allSelected = colIds.length > 0 && colIds.every((id) => selectedIds.includes(id));
-  const someSelected = colIds.some((id) => selectedIds.includes(id));
+export default function TicketCard({ order, onMoveClick, onHistoryClick, selected, onSelect, bulkMode }) {
+  const [hovered, setHovered] = useState(false);
+
+  function handleClick() {
+    if (bulkMode) {
+      onSelect(order.id);
+    } else {
+      onHistoryClick(order);
+    }
+  }
 
   return (
-    <div style={{ flex: 1, minWidth: 175 }}>
-      {/* Column header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 10, padding: '8px 12px',
-        background: style.bg, borderRadius: 8,
-        border: `1px solid ${style.accent}20`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Select-all checkbox in bulk mode */}
-          {bulkMode && (
-            <div
-              onClick={() => onSelectAll(colIds)}
-              style={{
-                width: 14, height: 14, borderRadius: 3,
-                border: `2px solid ${allSelected ? style.accent : '#334155'}`,
-                background: allSelected ? style.accent : someSelected ? style.accent + '50' : 'transparent',
-                cursor: 'pointer', flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              {allSelected && (
-                <svg width="7" height="7" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5">
-                  <path d="M2 6l3 3 5-5"/>
-                </svg>
-              )}
-              {!allSelected && someSelected && (
-                <div style={{ width: 6, height: 2, background: style.label, borderRadius: 1 }} />
-              )}
-            </div>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={handleClick}
+      style={{
+        background: selected ? '#1a2f4a' : hovered ? '#1A1F2E' : '#141820',
+        border: `1px solid ${selected ? '#3B82F6' : hovered ? '#2D3748' : '#1E293B'}`,
+        borderRadius: 7,
+        padding: '8px 12px',
+        marginBottom: 5,
+        cursor: 'pointer',
+        transition: 'all 0.12s ease',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}
+    >
+      {bulkMode && (
+        <div style={{
+          width: 15, height: 15, borderRadius: 4,
+          border: `2px solid ${selected ? '#3B82F6' : '#334155'}`,
+          background: selected ? '#3B82F6' : 'transparent',
+          flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {selected && (
+            <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5">
+              <path d="M2 6l3 3 5-5"/>
+            </svg>
           )}
-          <div style={{ width: 3, height: 14, borderRadius: 2, background: style.accent }} />
-          <span style={{ fontSize: 10, fontWeight: 700, color: style.label, letterSpacing: 0.8 }}>
-            {col.toUpperCase()}
-          </span>
         </div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: style.label, background: style.badge, borderRadius: 20, padding: '1px 8px' }}>
-          {orders.length}
-        </span>
+      )}
+
+      <div style={{ width: 5, height: 5, borderRadius: '50%', background: PRIORITY_DOT[order.priority] || '#F59E0B', flexShrink: 0 }} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: '#CBD5E1', fontFamily: "'DM Mono', monospace", letterSpacing: 0.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {order.vin || 'No VIN'}
+        </div>
+        <div style={{ fontSize: 10, color: '#475569', fontFamily: "'DM Mono', monospace", marginTop: 1, letterSpacing: 0.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {order.tracking_id || order.id}
+        </div>
       </div>
 
-      {/* Cards */}
-      <div style={{ minHeight: 80 }}>
-        {orders.map((order) => (
-          <TicketCard
-            key={order.id}
-            order={order}
-            onMoveClick={onMoveClick}
-            onHistoryClick={onHistoryClick}
-            bulkMode={bulkMode}
-            selected={selectedIds.includes(order.id)}
-            onSelect={onSelect}
-          />
-        ))}
-        {orders.length === 0 && (
-          <div style={{ border: '1px dashed #1E293B', borderRadius: 8, padding: '20px 10px', textAlign: 'center', fontSize: 10, color: '#334155', letterSpacing: 0.5 }}>
-            NO TICKETS
-          </div>
-        )}
-      </div>
+      {!bulkMode && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveClick(order); }}
+          style={{
+            fontSize: 10, padding: '2px 8px', borderRadius: 4,
+            border: '1px solid #1E3A5F', background: 'transparent',
+            color: '#60A5FA', cursor: 'pointer', fontWeight: 600,
+            fontFamily: "'DM Sans', system-ui, sans-serif", flexShrink: 0,
+          }}
+        >
+          Move
+        </button>
+      )}
     </div>
   );
 }
