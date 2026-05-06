@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/tml-api/:path*",
+      "destination": "https://tml-oem-api.vercel.app/:path*"
+    }
+  ]
+}
