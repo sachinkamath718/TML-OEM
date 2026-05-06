@@ -1,133 +1,100 @@
 import { useState } from 'react';
-import { COLUMNS } from '../constants';
 
-const MOVE_COLUMNS = COLUMNS.filter((c) => c !== 'Pending');
-
-const COL_COLORS = {
-  'In Process': '#2563EB',
-  'Completed':  '#059669',
-  'On Hold':    '#7C3AED',
-  'Failed':     '#DC2626',
+const COLUMNS = ['Pending', 'In Process', 'Completed', 'On Hold', 'Failed'];
+const COL_STYLES = {
+  Pending:      { bg: '#F0F4FF', text: '#3B5BDB', border: '#C5D0FF' },
+  'In Process': { bg: '#FFF8F0', text: '#D9480F', border: '#FFD8A8' },
+  Completed:    { bg: '#F0FFF4', text: '#1A7340', border: '#B2F2BB' },
+  'On Hold':    { bg: '#FFFDF0', text: '#966A00', border: '#FFE066' },
+  Failed:       { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
 };
 
-const inputStyle = {
-  width: '100%', padding: '9px 12px', borderRadius: 8,
-  border: '1px solid #E2E8F0', fontSize: 13, outline: 'none',
-  boxSizing: 'border-box', fontFamily: "'DM Sans', system-ui, sans-serif",
-  background: '#F8FAFC', color: '#0F172A',
-};
-
-const labelStyle = {
-  fontSize: 11, fontWeight: 600, color: '#64748B',
-  display: 'block', marginBottom: 6, letterSpacing: 0.5,
-};
-
-export default function BulkMoveModal({ count, onClose, onMove }) {
-  const [targetCol, setTargetCol] = useState(MOVE_COLUMNS[0]);
-  const [name, setName] = useState('');
+export default function BulkMoveModal({ count, onClose, onConfirm }) {
+  const [targetCol, setTargetCol] = useState('');
+  const [name,  setName]  = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState('');
-  const [note, setNote] = useState('');
+  const [role,  setRole]  = useState('');
+  const [note,  setNote]  = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
 
-  async function handleSubmit() {
-    if (!name.trim()) return setError('Name is required.');
-    if (!phone.trim()) return setError('Phone is required.');
-    if (!note.trim()) return setError('Reason note is required.');
+  const inp = {
+    width: '100%', padding: '8px 12px', borderRadius: 8,
+    border: '1px solid #E2E8F0', fontSize: 13, outline: 'none',
+    boxSizing: 'border-box', fontFamily: "'DM Sans', system-ui, sans-serif",
+    background: '#fff', color: '#0F172A',
+  };
+
+  function handleConfirm() {
+    if (!targetCol)   return setError('Please select a target status.');
+    if (!name.trim()) return setError('Your name is required.');
+    if (!/^\d{10}$/.test(phone.replace(/\s/g, ''))) return setError('Valid 10-digit phone required.');
+    if (!note.trim()) return setError('A reason note is required.');
     setError('');
-    setLoading(true);
-    await onMove({ targetCol, user: { name, phone, role }, note });
-    setLoading(false);
+    onConfirm({ targetCol, user: { name, phone, role }, note });
   }
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: '#fff', borderRadius: 16, padding: '28px 32px', width: 480, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', border: '1px solid #E2E8F0' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A' }}>Bulk Move</div>
-            <div style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>
-              Moving <span style={{ color: '#2563EB', fontWeight: 600 }}>{count} ticket{count !== 1 ? 's' : ''}</span> to a new status
-            </div>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={onClose}>
+      <div style={{ background: '#fff', borderRadius: 14, padding: '26px 28px', width: 460, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', fontFamily: "'DM Sans', system-ui, sans-serif" }} onClick={(e) => e.stopPropagation()}>
+
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A', marginBottom: 4 }}>Bulk Status Update</div>
+          <div style={{ fontSize: 13, color: '#64748B' }}>
+            Moving <span style={{ fontWeight: 700, color: '#2563EB' }}>{count} ticket{count !== 1 ? 's' : ''}</span> to a new status
           </div>
-          <button onClick={onClose} style={{ background: '#F1F5F9', border: 'none', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', color: '#64748B', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
-        <div style={{ marginBottom: 18 }}>
-          <label style={labelStyle}>MOVE TO *</label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {MOVE_COLUMNS.map((col) => {
-              const active = targetCol === col;
-              const color = COL_COLORS[col] || '#2563EB';
+        {/* Target column pills */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Move to *</label>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+            {COLUMNS.map((col) => {
+              const cs = COL_STYLES[col];
+              const sel = targetCol === col;
               return (
-                <button
-                  key={col}
-                  onClick={() => setTargetCol(col)}
-                  style={{
-                    padding: '7px 16px', borderRadius: 8,
-                    border: `1px solid ${active ? color : '#E2E8F0'}`,
-                    background: active ? color + '12' : '#F8FAFC',
-                    color: active ? color : '#64748B',
-                    fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    fontFamily: "'DM Sans', system-ui, sans-serif",
-                    transition: 'all 0.12s',
-                  }}
-                >
-                  {col}
-                </button>
+                <button key={col} onClick={() => setTargetCol(col)} style={{
+                  fontSize: 12, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
+                  fontWeight: sel ? 700 : 500, transition: 'all 0.1s',
+                  border: `1.5px solid ${sel ? cs.border : '#E2E8F0'}`,
+                  background: sel ? cs.bg : '#F8FAFC',
+                  color: sel ? cs.text : '#64748B',
+                  fontFamily: 'inherit',
+                }}>{col}</button>
               );
             })}
           </div>
         </div>
 
+        {/* User fields */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
-            <label style={labelStyle}>YOUR NAME *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" style={inputStyle} />
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Your Name *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" style={inp} />
           </div>
           <div>
-            <label style={labelStyle}>PHONE *</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10-digit mobile" style={inputStyle} />
-          </div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>ROLE</label>
-            <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Field Engineer" style={inputStyle} />
-          </div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>REASON / NOTE *</label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Reason for this bulk status change..."
-              rows={3}
-              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.6 }}
-            />
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Phone *</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="10-digit mobile" style={inp} />
           </div>
         </div>
 
-        {error && (
-          <div style={{ fontSize: 12, color: '#DC2626', marginBottom: 14, background: '#FEF2F2', padding: '10px 14px', borderRadius: 8, border: '1px solid #FECACA' }}>
-            {error}
-          </div>
-        )}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Role / Department</label>
+          <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Logistics Manager" style={inp} />
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>Note / Reason *</label>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for this bulk status change…" rows={3} style={{ ...inp, resize: 'vertical' }} />
+        </div>
+
+        {error && <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', padding: '8px 12px', borderRadius: 7, marginBottom: 14 }}>{error}</div>}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #E2E8F0', background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#64748B', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#F8FAFC', fontSize: 13, cursor: 'pointer', color: '#374151', fontFamily: 'inherit' }}>
             Cancel
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: loading ? '#93C5FD' : '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: "'DM Sans', system-ui, sans-serif" }}
-          >
-            {loading ? 'Updating...' : `Move ${count} Ticket${count !== 1 ? 's' : ''}`}
+          <button onClick={handleConfirm} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Update {count} Ticket{count !== 1 ? 's' : ''}
           </button>
         </div>
       </div>
