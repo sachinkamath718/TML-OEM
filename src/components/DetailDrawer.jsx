@@ -12,7 +12,11 @@ const COL_STYLES = {
 
 const PRIORITY_COLOR = { High: '#EF4444', Medium: '#F59E0B', Low: '#10B981' };
 
-// Map raw DB status → display label for ColBadge
+const MODULE_STAGE = {
+  Orders: 'order', Shipment: 'shipment', Delivery: 'delivery',
+  Installation: 'installation', AIS140: 'ais140', Mining: 'mining',
+};
+
 function toDisplayStatus(s) {
   const map = {
     pending: 'Pending', in_progress: 'In Progress',
@@ -22,26 +26,30 @@ function toDisplayStatus(s) {
 }
 
 export default function DetailDrawer({ order, onClose, onMoveClick }) {
-  const [history, setHistory]   = useState([]);
+  const [history,     setHistory]     = useState([]);
   const [histLoading, setHistLoading] = useState(false);
 
-  // Fetch history from order_status_history whenever order changes
   useEffect(() => {
     if (!order?.order_id && !order?.id) return;
     const orderId = order.order_id || order.id;
+    const stage   = order._module ? MODULE_STAGE[order._module] : null;
 
     async function loadHistory() {
       setHistLoading(true);
-      const { data, error } = await supabase
+      let query = supabase
         .from('order_status_history')
         .select('*')
         .eq('order_id', orderId)
         .order('created_at', { ascending: false });
+
+      if (stage) query = query.eq('stage', stage);
+
+      const { data, error } = await query;
       if (!error) setHistory(data || []);
       setHistLoading(false);
     }
     loadHistory();
-  }, [order?.id, order?.order_id]);
+  }, [order?.id, order?.order_id, order?._module]);
 
   if (!order) return null;
 
@@ -106,14 +114,14 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
 
           {/* Order Details */}
           <Section title="Order Details">
-            <Row label="Order ID"   value={order.order_id || order.id} mono />
-            <Row label="Ticket No"  value={order.ticket_no || order.order_number || '—'} mono />
-            <Row label="Tracking"   value={order.tracking_id || '—'} mono />
-            <Row label="Created"    value={formatDate(order.created_at)} />
-            <Row label="Updated"    value={formatDate(order.updated_at)} />
+            <Row label="Order ID"  value={order.order_id || order.id} mono />
+            <Row label="Ticket No" value={order.ticket_no || order.order_number || '—'} mono />
+            <Row label="Tracking"  value={order.tracking_id || '—'} mono />
+            <Row label="Created"   value={formatDate(order.created_at)} />
+            <Row label="Updated"   value={formatDate(order.updated_at)} />
           </Section>
 
-          {/* Vehicle */}
+          {/* Vehicle Details */}
           <Section title="Vehicle Details">
             <Row label="VIN"        value={order.vin} mono />
             <Row label="Model"      value={order.model || order.vehicle_details?.model || '—'} />
@@ -126,7 +134,7 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
             <Row label="RTO"        value={[order.rto_office_code, order.rto_state].filter(Boolean).join(', ') || '—'} />
           </Section>
 
-          {/* Customer */}
+          {/* Customer Details */}
           {order.customer_details && (
             <Section title="Customer Details">
               <Row label="Name"  value={order.customer_details.name} />
@@ -137,7 +145,7 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
             </Section>
           )}
 
-          {/* Shipment-specific fields */}
+          {/* Shipment-specific */}
           {(order.courier || order.awb_number) && (
             <Section title="Shipment Details">
               <Row label="Courier"           value={order.courier || '—'} />
@@ -147,16 +155,16 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
             </Section>
           )}
 
-          {/* Delivery-specific fields */}
+          {/* Delivery-specific */}
           {(order.delivered_to || order.delivery_date) && (
             <Section title="Delivery Details">
-              <Row label="Delivered To"   value={order.delivered_to || '—'} />
-              <Row label="Delivery Date"  value={order.delivery_date || '—'} />
-              <Row label="Address"        value={order.delivery_address || '—'} />
+              <Row label="Delivered To"  value={order.delivered_to || '—'} />
+              <Row label="Delivery Date" value={order.delivery_date || '—'} />
+              <Row label="Address"       value={order.delivery_address || '—'} />
             </Section>
           )}
 
-          {/* Installation-specific fields */}
+          {/* Installation-specific */}
           {(order.technician_name || order.scheduled_date) && (
             <Section title="Installation Details">
               <Row label="Technician"     value={order.technician_name || '—'} />
@@ -173,7 +181,7 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
             </Section>
           )}
 
-          {/* History */}
+          {/* Activity History */}
           <Section title={`Activity History (${histLoading ? '…' : history.length})`}>
             {histLoading && (
               <div style={{ fontSize: 12, color: '#94A3B8' }}>Loading history…</div>
@@ -206,25 +214,19 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
                   <div style={{ flex: 1, paddingBottom: 2 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A' }}>
-                        {isCreated ? 'Order Created' : 'Status Changed'}
-                        {h.stage && (
-                          <span style={{ marginLeft: 6, fontSize: 10, color: '#94A3B8', fontWeight: 400 }}>
-                            [{h.stage}]
-                          </span>
-                        )}
+                        {isCreated ? 'Created' : 'Status Changed'}
                       </span>
                       <span style={{ fontSize: 10, color: '#94A3B8' }}>{formatDate(h.created_at)}</span>
                     </div>
 
                     {/* From → To badges */}
-                    {h.from_status && (
+                    {h.from_status ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
                         <ColBadge col={fromDisplay} />
                         <span style={{ color: '#CBD5E1', fontSize: 10 }}>→</span>
                         <ColBadge col={toDisplay} />
                       </div>
-                    )}
-                    {!h.from_status && (
+                    ) : (
                       <div style={{ marginBottom: 4 }}>
                         <ColBadge col={toDisplay} />
                       </div>
@@ -249,6 +251,7 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
               );
             })}
           </Section>
+
         </div>
       </div>
     </>
