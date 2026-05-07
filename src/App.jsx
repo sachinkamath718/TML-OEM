@@ -163,7 +163,7 @@ export default function App() {
 
   // ─── Single move ──────────────────────────────────────────────────────────────
   async function handleMove(moveData) {
-    const { targetCol, extraFields } = moveData;
+  await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });    
     const ticket = tickets.find((t) => t.id === moveTarget.id);
     if (!ticket) return;
 
