@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { COLUMNS, MODULES } from './constants';
 import { generateId } from './utils';
-import { createOrder } from './api';
 
 import Sidebar from './components/Sidebar';
 import KanbanColumn from './components/KanbanColumn';
@@ -12,7 +11,6 @@ import NewOrderModal from './components/NewOrderModal';
 
 import { supabase } from './supabaseClient';
 
-// Maps module name → Supabase table name
 const MODULE_TABLE = {
   Orders:       'orders',
   Shipment:     'shipment_tickets',
@@ -22,11 +20,10 @@ const MODULE_TABLE = {
   Mining:       'mining_tickets',
 };
 
-// Maps each table's status field value → display status
 function normalizeTicket(ticket, module) {
   const statusMap = {
     pending:     'Pending',
-    in_progress: 'In Process',
+    in_progress: 'In Progress',
     completed:   'Completed',
     on_hold:     'On Hold',
     failed:      'Failed',
@@ -42,18 +39,20 @@ function normalizeTicket(ticket, module) {
 
 function displayToRaw(display) {
   const map = {
-    'Pending':    'pending',
-    'In Process': 'in_progress',
-    'Completed':  'completed',
-    'On Hold':    'on_hold',
-    'Failed':     'failed',
+    'Pending':     'pending',
+    'In Progress': 'in_progress',
+    'Completed':   'completed',
+    'On Hold':     'on_hold',
+    'Failed':      'failed',
   };
   return map[display] || 'pending';
 }
 
 export default function App() {
+  // All module data stored together — no blink on switch
+  const [allTickets, setAllTickets]     = useState({});
+  const [loadedMods, setLoadedMods]     = useState({});
   const [activeModule, setActiveModule] = useState('Orders');
-  const [tickets, setTickets]           = useState([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
 
@@ -65,52 +64,75 @@ export default function App() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
 
-  // ─── Fetch active module's tickets ────────────────────────────────────────
+  // ─── Fetch one module ────────────────────────────────────────────────────────
+  const fetchModule = useCallback(async (module) => {
+    const table = MODULE_TABLE[module];
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return (data || []).map((t) => normalizeTicket(t, module));
+  }, []);
+
+  // ─── Initial load — fetch active module first, then rest in background ───────
   useEffect(() => {
-    async function fetchTickets() {
+    async function init() {
       setLoading(true);
       setError(null);
       try {
-        const table = MODULE_TABLE[activeModule];
-        const { data, error } = await supabase
-          .from(table)
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        setTickets((data || []).map((t) => normalizeTicket(t, activeModule)));
+        const first = await fetchModule(activeModule);
+        setAllTickets((prev) => ({ ...prev, [activeModule]: first }));
+        setLoadedMods((prev) => ({ ...prev, [activeModule]: true }));
+        setLoading(false);
+
+        // Load remaining modules silently in background
+        const rest = MODULES.filter((m) => m !== activeModule);
+        for (const mod of rest) {
+          try {
+            const tickets = await fetchModule(mod);
+            setAllTickets((prev) => ({ ...prev, [mod]: tickets }));
+            setLoadedMods((prev) => ({ ...prev, [mod]: true }));
+          } catch (_) {}
+        }
       } catch (err) {
-        setError('Failed to load tickets: ' + err.message);
-      } finally {
+        setError('Failed to load: ' + err.message);
         setLoading(false);
       }
     }
-    fetchTickets();
-  }, [activeModule]);
+    init();
+  }, []); // eslint-disable-line
 
-  // ─── Realtime for active module ────────────────────────────────────────────
+  // ─── Realtime — subscribe to all module tables ────────────────────────────────
   useEffect(() => {
-    const table = MODULE_TABLE[activeModule];
-    const channel = supabase
-      .channel(`${table}-changes`)
-      .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setTickets((prev) => [normalizeTicket(payload.new, activeModule), ...prev]);
-        } else if (payload.eventType === 'UPDATE') {
-          setTickets((prev) => prev.map((t) =>
-            t.id === payload.new.id ? normalizeTicket(payload.new, activeModule) : t
-          ));
-          setDetailOrder((prev) =>
-            prev?.id === payload.new.id ? normalizeTicket(payload.new, activeModule) : prev
-          );
-        } else if (payload.eventType === 'DELETE') {
-          setTickets((prev) => prev.filter((t) => t.id !== payload.old.id));
-        }
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [activeModule]);
+    const channels = MODULES.map((module) => {
+      const table = MODULE_TABLE[module];
+      return supabase
+        .channel(`${table}-rt`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+          setAllTickets((prev) => {
+            const current = prev[module] || [];
+            if (payload.eventType === 'INSERT') {
+              return { ...prev, [module]: [normalizeTicket(payload.new, module), ...current] };
+            } else if (payload.eventType === 'UPDATE') {
+              return { ...prev, [module]: current.map((t) => t.id === payload.new.id ? normalizeTicket(payload.new, module) : t) };
+            } else if (payload.eventType === 'DELETE') {
+              return { ...prev, [module]: current.filter((t) => t.id !== payload.old.id) };
+            }
+            return prev;
+          });
+          if (payload.eventType === 'UPDATE') {
+            setDetailOrder((prev) => prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev);
+          }
+        })
+        .subscribe();
+    });
+    return () => { channels.forEach((c) => supabase.removeChannel(c)); };
+  }, []);
 
-  // ─── Filtered tickets ──────────────────────────────────────────────────────
+  // ─── Active module tickets ───────────────────────────────────────────────────
+  const tickets = allTickets[activeModule] || [];
+
   const filteredTickets = tickets.filter((t) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
@@ -119,7 +141,7 @@ export default function App() {
       .some((f) => f.toLowerCase().includes(q));
   });
 
-  // ─── Selection helpers ─────────────────────────────────────────────────────
+  // ─── Selection helpers ────────────────────────────────────────────────────────
   function toggleSelect(id) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -139,46 +161,51 @@ export default function App() {
     setBulkMode(false);
   }
 
-  // ─── Single move ───────────────────────────────────────────────────────────
-  async function handleMove({ targetCol, user, note }) {
+  // ─── Single move ──────────────────────────────────────────────────────────────
+  async function handleMove(moveData) {
+    const { targetCol, extraFields } = moveData;
     const ticket = tickets.find((t) => t.id === moveTarget.id);
     if (!ticket) return;
 
-    const rawStatus = displayToRaw(targetCol);
-    const historyEntry = {
-      id: 'h-' + generateId(),
-      action: 'Status Changed',
-      from: ticket.status,
-      to: targetCol,
-      timestamp: new Date().toISOString(),
-      user, note,
+    const rawStatus      = displayToRaw(targetCol);
+    const updatedAt      = new Date().toISOString();
+    const historyEntry   = {
+      id: 'h-' + generateId(), action: 'Status Changed',
+      from: ticket.status, to: targetCol,
+      timestamp: updatedAt,
+      updatedAt,
+      ...extraFields,
     };
     const updatedHistory = [...(ticket.history || []), historyEntry];
+    const updatePayload  = { status: rawStatus, history: updatedHistory, updated_at: updatedAt, ...extraFields };
 
     try {
       const { error } = await supabase
         .from(ticket._table)
-        .update({ status: rawStatus, metadata: { ...ticket.metadata, last_updated_by: user }, history: updatedHistory })
+        .update(updatePayload)
         .eq('id', ticket.id);
       if (error) throw error;
 
-      setTickets((prev) => prev.map((t) =>
-        t.id === ticket.id ? { ...t, status: targetCol, _rawStatus: rawStatus, history: updatedHistory } : t
-      ));
+      setAllTickets((prev) => ({
+        ...prev,
+        [activeModule]: (prev[activeModule] || []).map((t) =>
+          t.id === ticket.id ? { ...t, status: targetCol, _rawStatus: rawStatus, history: updatedHistory, ...extraFields } : t
+        ),
+      }));
       setDetailOrder((prev) =>
         prev?.id === ticket.id ? { ...prev, status: targetCol, history: updatedHistory } : prev
       );
     } catch (err) {
-      alert('Failed to update status: ' + err.message);
+      alert('Failed to update: ' + err.message);
     }
     setMoveTarget(null);
   }
 
-  // ─── Bulk move ─────────────────────────────────────────────────────────────
-  async function handleBulkMove({ targetCol, user, note }) {
-    const ids = [...selectedIds];
+  // ─── Bulk move ────────────────────────────────────────────────────────────────
+  async function handleBulkMove({ targetCol }) {
+    const ids       = [...selectedIds];
     const rawStatus = displayToRaw(targetCol);
-    const now = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
 
     try {
       await Promise.all(ids.map((id) => {
@@ -187,17 +214,16 @@ export default function App() {
         const updatedHistory = [...(ticket.history || []), {
           id: 'h-' + generateId(), action: 'Status Changed',
           from: ticket.status, to: targetCol,
-          timestamp: now, user, note,
+          timestamp: updatedAt, updatedAt,
         }];
-        return supabase
-          .from(ticket._table)
-          .update({ status: rawStatus, history: updatedHistory })
-          .eq('id', id);
+        return supabase.from(ticket._table).update({ status: rawStatus, history: updatedHistory, updated_at: updatedAt }).eq('id', id);
       }));
 
-      setTickets((prev) => prev.map((t) => {
-        if (!selectedIds.has(t.id)) return t;
-        return { ...t, status: targetCol, _rawStatus: rawStatus };
+      setAllTickets((prev) => ({
+        ...prev,
+        [activeModule]: (prev[activeModule] || []).map((t) =>
+          selectedIds.has(t.id) ? { ...t, status: targetCol, _rawStatus: rawStatus } : t
+        ),
       }));
       exitBulkMode();
       setShowBulkMove(false);
@@ -206,91 +232,48 @@ export default function App() {
     }
   }
 
-  // ─── Create ────────────────────────────────────────────────────────────────
-  async function handleCreate(tmlPayload, orderPayload, vehicleRows, spocRow) {
+  // ─── Create ───────────────────────────────────────────────────────────────────
+  async function handleCreate(orderPayload, vehicleRows, spocRow) {
     try {
-      // Step 1: Call TML API
-      const { data: tmlData, error: tmlError } = await createOrder(tmlPayload);
-      if (tmlError) { alert('TML API error: ' + tmlError); return; }
-
-      // Step 2: Insert into orders table
       const { data: orderData, error: orderErr } = await supabase
         .from('orders')
-        .insert({ ...orderPayload, tml_order_id: tmlData?.[0]?.order_tracking_id || null, tracking_id: tmlData?.[0]?.order_tracking_id || ('TRK-' + generateId()) })
+        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId() })
         .select()
         .single();
       if (orderErr) throw orderErr;
 
-      // Step 3: Insert order_vehicles with TML tracking IDs merged
-      const enrichedVehicles = vehicleRows.map((v) => {
-        const tmlVehicle = tmlData?.find((t) => t.vin === v.vin);
-        return {
-          ...v,
-          order_id:         orderData.id,
-          ticket_id:        tmlVehicle?.order_tracking_id || ('TKT-' + generateId()),
-          tracking_id:      tmlVehicle?.order_tracking_id || ('TRK-' + generateId()),
-          ais140_ticket_no: tmlVehicle?.ais140_ticket_no  || null,
-          mining_ticket_no: tmlVehicle?.mining_ticket_no  || null,
-        };
-      });
+      const enrichedVehicles = vehicleRows.map((v) => ({
+        ...v,
+        order_id:    orderData.id,
+        ticket_id:   'TKT-' + generateId(),
+        tracking_id: 'TRK-' + generateId(),
+      }));
 
       const { error: vehicleErr } = await supabase.from('order_vehicles').insert(enrichedVehicles);
       if (vehicleErr) throw vehicleErr;
 
-      // Step 4: Insert SPOC details for each vehicle's tracking_id
-      const spocRows = enrichedVehicles.map((v) => ({
-        ...spocRow,
-        tracking_id: v.tracking_id,
-      }));
+      const spocRows = enrichedVehicles.map((v) => ({ ...spocRow, tracking_id: v.tracking_id }));
       await supabase.from('spoc_details').insert(spocRows);
 
-      // Step 5: Create tickets in each module table for each vehicle
       for (const v of enrichedVehicles) {
-        const baseTicket = {
-          vin:        v.vin,
-          tracking_id: v.tracking_id,
-          order_id:   orderData.id,
-          status:     'pending',
-        };
-
-        await supabase.from('shipment_tickets').insert({ ...baseTicket, ticket_no: 'SHP-' + generateId() });
-        await supabase.from('delivery_tickets').insert({ ...baseTicket, ticket_no: 'DLV-' + generateId() });
-        await supabase.from('installation_tickets').insert({ ...baseTicket, ticket_no: 'INS-' + generateId() });
-
-        if (v.ais140_ticket_no) {
-          await supabase.from('ais140_tickets').insert({
-            ...baseTicket,
-            ticket_no:         v.ais140_ticket_no,
-            order_tracking_id: v.tracking_id,
-            vehicle_details:   { vin: v.vin, model: v.model, make: v.make },
-            customer_details:  orderPayload.customer_details,
-          });
-        }
-
-        if (v.mining_ticket_no) {
-          await supabase.from('mining_tickets').insert({
-            ...baseTicket,
-            mining_ticket_no:  v.mining_ticket_no,
-            order_tracking_id: v.tracking_id,
-            vehicle_details:   { vin: v.vin, model: v.model, make: v.make },
-            customer_details:  orderPayload.customer_details,
-          });
-        }
+        const base = { vin: v.vin, tracking_id: v.tracking_id, order_id: orderData.id, status: 'pending' };
+        await supabase.from('shipment_tickets').insert({ ...base, ticket_no: 'SHP-' + generateId() });
+        await supabase.from('delivery_tickets').insert({ ...base, ticket_no: 'DLV-' + generateId() });
+        await supabase.from('installation_tickets').insert({ ...base, ticket_no: 'INS-' + generateId() });
       }
 
+      // Refresh all modules
+      for (const mod of MODULES) {
+        const fresh = await fetchModule(mod);
+        setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
+      }
       setShowNewOrder(false);
-      // Refresh current module
-      const table = MODULE_TABLE[activeModule];
-      const { data: fresh } = await supabase.from(table).select('*').order('created_at', { ascending: false });
-      setTickets((fresh || []).map((t) => normalizeTicket(t, activeModule)));
-
     } catch (err) {
       alert('Failed to create order: ' + err.message);
     }
   }
 
-  const moduleTickets   = tickets;
-  const inProcessCount  = moduleTickets.filter((t) => t.status === 'In Process').length;
+  const inProgressCount = tickets.filter((t) => t.status === 'In Progress').length;
 
   if (loading) {
     return (
@@ -316,7 +299,7 @@ export default function App() {
       <Sidebar
         activeModule={activeModule}
         onSelect={(m) => { setActiveModule(m); exitBulkMode(); setSearch(''); }}
-        totalOrders={moduleTickets.length}
+        totalOrders={tickets.length}
       />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -325,7 +308,8 @@ export default function App() {
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
             <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
-              {moduleTickets.length} total · {inProcessCount} in progress
+              {tickets.length} total · {inProgressCount} in progress
+              {!loadedMods[activeModule] && <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -385,14 +369,10 @@ export default function App() {
       </div>
 
       {detailOrder && (
-        <DetailDrawer
-          order={detailOrder}
-          onClose={() => setDetailOrder(null)}
-          onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }}
-        />
+        <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }} />
       )}
       {moveTarget && (
-        <MoveModal order={moveTarget} onClose={() => setMoveTarget(null)} onMove={handleMove} />
+        <MoveModal order={moveTarget} module={activeModule} onClose={() => setMoveTarget(null)} onMove={handleMove} />
       )}
       {showBulkMove && (
         <BulkMoveModal count={selectedIds.size} onClose={() => setShowBulkMove(false)} onConfirm={handleBulkMove} />
