@@ -20,6 +20,15 @@ const MODULE_TABLE = {
   Mining:       'mining_tickets',
 };
 
+const MODULE_STAGE = {
+  Orders:       'order',
+  Shipment:     'shipment',
+  Delivery:     'delivery',
+  Installation: 'installation',
+  AIS140:       'ais140',
+  Mining:       'mining',
+};
+
 function normalizeTicket(ticket, module) {
   const statusMap = {
     pending:     'Pending',
@@ -49,7 +58,6 @@ function displayToRaw(display) {
 }
 
 export default function App() {
-  // All module data stored together — no blink on switch
   const [allTickets, setAllTickets]     = useState({});
   const [loadedMods, setLoadedMods]     = useState({});
   const [activeModule, setActiveModule] = useState('Orders');
@@ -75,7 +83,7 @@ export default function App() {
     return (data || []).map((t) => normalizeTicket(t, module));
   }, []);
 
-  // ─── Initial load — fetch active module first, then rest in background ───────
+  // ─── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
       setLoading(true);
@@ -86,7 +94,6 @@ export default function App() {
         setLoadedMods((prev) => ({ ...prev, [activeModule]: true }));
         setLoading(false);
 
-        // Load remaining modules silently in background
         const rest = MODULES.filter((m) => m !== activeModule);
         for (const mod of rest) {
           try {
@@ -103,7 +110,7 @@ export default function App() {
     init();
   }, []); // eslint-disable-line
 
-  // ─── Realtime — subscribe to all module tables ────────────────────────────────
+  // ─── Realtime ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const channels = MODULES.map((module) => {
       const table = MODULE_TABLE[module];
@@ -130,7 +137,7 @@ export default function App() {
     return () => { channels.forEach((c) => supabase.removeChannel(c)); };
   }, []);
 
-  // ─── Active module tickets ───────────────────────────────────────────────────
+  // ─── Active tickets ──────────────────────────────────────────────────────────
   const tickets = allTickets[activeModule] || [];
 
   const filteredTickets = tickets.filter((t) => {
@@ -161,47 +168,62 @@ export default function App() {
     setBulkMode(false);
   }
 
-  // ─── Single move ──────────────────────────────────────────────────────────────
-async function handleMove(moveData) {
-  console.log('handleMove fired', moveData, 'ticket:', moveTarget);
-  const { targetCol, extraFields = {}, notes = '' } = moveData;
-  const ticket = tickets.find((t) => t.id === moveTarget.id);
-  if (!ticket) return;
-
-  const rawStatus = displayToRaw(targetCol);
-  const updatedAt = new Date().toISOString();
-
-  const safeExtra = { ...extraFields };
-  delete safeExtra.changed_by;
-  delete safeExtra.notes;
-
-  try {
-    const { error: updateErr } = await supabase
-      .from(ticket._table)
-      .update({ status: rawStatus, updated_at: updatedAt, ...safeExtra })
-      .eq('id', ticket.id);
-    if (updateErr) throw updateErr;
-
-    await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
-
-    setAllTickets((prev) => ({
-      ...prev,
-      [activeModule]: (prev[activeModule] || []).map((t) =>
-        t.id === ticket.id
-          ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-          : t
-      ),
-    }));
-    setDetailOrder((prev) =>
-      prev?.id === ticket.id
-        ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-        : prev
-    );
-  } catch (err) {
-    alert('Failed to update: ' + err.message);
+  // ─── Write history row ───────────────────────────────────────────────────────
+  async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
+    const { error } = await supabase.from('order_status_history').insert({
+      order_id:    ticket.order_id,
+      vin:         ticket.vin,
+      stage:       MODULE_STAGE[activeModule],
+      from_status: fromRaw,
+      to_status:   toRaw,
+      changed_by:  extra.changed_by || null,
+      notes:       extra.notes      || null,
+      metadata:    extra.metadata   || null,
+    });
+    if (error) console.warn('History write failed:', error.message);
   }
-  setMoveTarget(null);
-}
+
+  // ─── Single move ──────────────────────────────────────────────────────────────
+  async function handleMove(moveData) {
+    const { targetCol, extraFields = {}, notes = '' } = moveData;
+    const ticket = tickets.find((t) => t.id === moveTarget.id);
+    if (!ticket) return;
+
+    const rawStatus = displayToRaw(targetCol);
+    const updatedAt = new Date().toISOString();
+
+    const safeExtra = { ...extraFields };
+    delete safeExtra.changed_by;
+    delete safeExtra.notes;
+
+    try {
+      const { error: updateErr } = await supabase
+        .from(ticket._table)
+        .update({ status: rawStatus, updated_at: updatedAt, ...safeExtra })
+        .eq('id', ticket.id);
+      if (updateErr) throw updateErr;
+
+      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+
+      setAllTickets((prev) => ({
+        ...prev,
+        [activeModule]: (prev[activeModule] || []).map((t) =>
+          t.id === ticket.id
+            ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+            : t
+        ),
+      }));
+      setDetailOrder((prev) =>
+        prev?.id === ticket.id
+          ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+          : prev
+      );
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+    }
+    setMoveTarget(null);
+  }
+
   // ─── Bulk move ────────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
@@ -209,15 +231,17 @@ async function handleMove(moveData) {
     const updatedAt = new Date().toISOString();
 
     try {
-      await Promise.all(ids.map((id) => {
+      await Promise.all(ids.map(async (id) => {
         const ticket = tickets.find((t) => t.id === id);
-        if (!ticket) return Promise.resolve();
-        const updatedHistory = [...(ticket.history || []), {
-          id: 'h-' + generateId(), action: 'Status Changed',
-          from: ticket.status, to: targetCol,
-          timestamp: updatedAt, updatedAt,
-        }];
-        return supabase.from(ticket._table).update({ status: rawStatus, history: updatedHistory, updated_at: updatedAt }).eq('id', id);
+        if (!ticket) return;
+
+        const { error: updateErr } = await supabase
+          .from(ticket._table)
+          .update({ status: rawStatus, updated_at: updatedAt })
+          .eq('id', id);
+        if (updateErr) throw updateErr;
+
+        await writeHistory(ticket, ticket._rawStatus, rawStatus);
       }));
 
       setAllTickets((prev) => ({
@@ -233,7 +257,7 @@ async function handleMove(moveData) {
     }
   }
 
-  // ─── Create ───────────────────────────────────────────────────────────────────
+  // ─── Create order ─────────────────────────────────────────────────────────────
   async function handleCreate(orderPayload, vehicleRows, spocRow) {
     try {
       const { data: orderData, error: orderErr } = await supabase
@@ -263,7 +287,14 @@ async function handleMove(moveData) {
         await supabase.from('installation_tickets').insert({ ...base, ticket_no: 'INS-' + generateId() });
       }
 
-      // Refresh all modules
+      await supabase.from('order_status_history').insert({
+        order_id:    orderData.id,
+        stage:       'order',
+        from_status: null,
+        to_status:   'pending',
+        notes:       'Order created',
+      });
+
       for (const mod of MODULES) {
         const fresh = await fetchModule(mod);
         setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
