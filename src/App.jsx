@@ -194,47 +194,52 @@ export default function App() {
   }
 
   // ─── Single move ──────────────────────────────────────────────────────────
-  async function handleMove(moveData) {
-    const { targetCol, extraFields = {}, notes = '' } = moveData;
-    const ticket = tickets.find((t) => t.id === moveTarget.id);
-    if (!ticket) return;
+ async function handleMove(moveData) {
+  const { targetCol, extraFields = {}, notes = '' } = moveData;
+  const ticket = tickets.find((t) => t.id === moveTarget.id);
+  if (!ticket) return;
 
-    const rawStatus = displayToRaw(targetCol);
-    const updatedAt = new Date().toISOString();
+  const rawStatus = displayToRaw(targetCol);
+  const updatedAt = new Date().toISOString();
 
-    // Remove non-column fields before sending to Supabase
-    const safeExtra = { ...extraFields };
-    delete safeExtra.changed_by;
-    delete safeExtra.notes;
+  const safeExtra = { ...extraFields };
+  delete safeExtra.changed_by;
+  delete safeExtra.notes;
 
-    try {
-      const { error: updateErr } = await supabase
-        .from(ticket._table)
-        .update({ status: rawStatus, updated_at: updatedAt, ...safeExtra })
-        .eq('id', ticket.id);
-      if (updateErr) throw updateErr;
+  try {
+    // Don't include updated_at — not all tables have this column
+    const updatePayload = { status: rawStatus, ...safeExtra };
 
-      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+    const { error: updateErr } = await supabase
+      .from(ticket._table)
+      .update(updatePayload)
+      .eq('id', ticket.id);
+    if (updateErr) throw updateErr;
 
-      setAllTickets((prev) => ({
-        ...prev,
-        [activeModule]: (prev[activeModule] || []).map((t) =>
-          t.id === ticket.id
-            ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-            : t
-        ),
-      }));
-      setDetailOrder((prev) =>
-        prev?.id === ticket.id
-          ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-          : prev
-      );
-    } catch (err) {
-      alert('Failed to update: ' + err.message);
-    }
-    setMoveTarget(null);
+    await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+
+    // Force update local state with new status
+    setAllTickets((prev) => ({
+      ...prev,
+      [activeModule]: (prev[activeModule] || []).map((t) =>
+        t.id === ticket.id
+          ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+          : t
+      ),
+    }));
+
+    // Force update detail drawer
+    setDetailOrder((prev) =>
+      prev?.id === ticket.id
+        ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+        : prev
+    );
+
+  } catch (err) {
+    alert('Failed to update: ' + err.message);
   }
-
+  setMoveTarget(null);
+}
   // ─── Bulk move ────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
