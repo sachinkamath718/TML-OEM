@@ -10,11 +10,45 @@ const COL_STYLES = {
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
 };
 
+// Normalize raw DB status → display status, in case raw leaks through
+function toDisplayStatus(status) {
+  const map = {
+    pending:     'Pending',
+    in_progress: 'In Progress',
+    completed:   'Completed',
+    on_hold:     'On Hold',
+    failed:      'Failed',
+    // already display — pass through
+    'Pending':     'Pending',
+    'In Progress': 'In Progress',
+    'Completed':   'Completed',
+    'On Hold':     'On Hold',
+    'Failed':      'Failed',
+  };
+  return map[status] || 'Pending';
+}
+
 function getFieldConfig(module, fromStatus, toStatus) {
-  if (module === 'Orders')       return { type: 'orders' };
-  if (module === 'Shipment')     return fromStatus === 'In Progress' && toStatus === 'Completed' ? { type: 'shipment_complete' } : { type: 'none' };
-  if (module === 'Delivery')     return fromStatus === 'In Progress' && toStatus === 'Completed' ? { type: 'delivery_complete' } : { type: 'none' };
-  if (module === 'Installation') return fromStatus === 'Pending'     && toStatus === 'In Progress' ? { type: 'installation_start' } : { type: 'none' };
+  if (module === 'Orders') return { type: 'orders' };
+
+  if (module === 'Shipment') {
+    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'none' };
+    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'shipment_complete' };
+    return { type: 'none' };
+  }
+
+  if (module === 'Delivery') {
+    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'none' };
+    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'delivery_complete' };
+    return { type: 'none' };
+  }
+
+  if (module === 'Installation') {
+    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'installation_start' };
+    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'none' };
+    return { type: 'none' };
+  }
+
   return { type: 'none' };
 }
 
@@ -37,8 +71,10 @@ export default function MoveModal({ order, module, onClose, onMove }) {
 
   const [error, setError] = useState('');
 
+  // Always work with display status — defensive normalize
+  const fromStatus  = toDisplayStatus(order?.status);
   const updatedAt   = new Date().toISOString();
-  const fieldConfig = targetCol ? getFieldConfig(module, order?.status, targetCol) : { type: 'none' };
+  const fieldConfig = targetCol ? getFieldConfig(module, fromStatus, targetCol) : { type: 'none' };
 
   const inp = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -47,6 +83,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     background: '#fff', color: '#0F172A',
   };
   const readonlyInp = { ...inp, background: '#F8FAFC', color: '#94A3B8', cursor: 'not-allowed' };
+
   const label = (text, required) => (
     <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>
       {text}{required && <span style={{ color: '#EF4444' }}> *</span>}
@@ -54,10 +91,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   );
 
   function handleConfirm() {
-    console.log('handleConfirm fired', { targetCol, fieldConfig });
+    if (!targetCol) return setError('Please select a target status.');
 
-    // extraFields = only real DB columns for the ticket table
-    // notes       = goes to order_status_history only (handled in App.jsx writeHistory)
     const extraFields = {};
     let notes = '';
 
@@ -65,7 +100,6 @@ export default function MoveModal({ order, module, onClose, onMove }) {
       if (!courier.trim())        return setError('Courier is required.');
       if (!trackingNumber.trim()) return setError('Tracking number is required.');
       if (!expectedDelivery)      return setError('Expected delivery date is required.');
-      // courier, awb_number, expected_delivery are real columns on shipment_tickets
       Object.assign(extraFields, {
         courier,
         awb_number:        trackingNumber,
@@ -76,7 +110,6 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     if (fieldConfig.type === 'delivery_complete') {
       if (!deliveredTo.trim()) return setError('Delivered To is required.');
       if (!deliveryDate)       return setError('Delivery date is required.');
-      // delivered_to, delivery_date are real columns on delivery_tickets
       Object.assign(extraFields, {
         delivered_to:  deliveredTo,
         delivery_date: deliveryDate,
@@ -86,7 +119,6 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     if (fieldConfig.type === 'installation_start') {
       if (!technicianName.trim()) return setError('Technician name is required.');
       if (!scheduledDate)         return setError('Scheduled date is required.');
-      // technician_name, scheduled_date are real columns on installation_tickets
       Object.assign(extraFields, {
         technician_name: technicianName,
         scheduled_date:  scheduledDate,
@@ -94,8 +126,6 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     }
 
     if (fieldConfig.type === 'orders' && remarks.trim()) {
-      // orders table has no `remarks` column — store in metadata JSONB
-      // and also pass as notes for the history row
       extraFields.metadata = { ...(order?.metadata || {}), remarks: remarks.trim() };
       notes = remarks.trim();
     }
@@ -121,11 +151,19 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         </div>
 
+        {/* Current status badge */}
+        <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Current:</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: COL_STYLES[fromStatus]?.text, background: COL_STYLES[fromStatus]?.bg, border: `1px solid ${COL_STYLES[fromStatus]?.border}`, borderRadius: 10, padding: '2px 10px' }}>
+            {fromStatus}
+          </span>
+        </div>
+
         {/* Target column pills */}
         <div style={{ marginBottom: 18 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Move to *</label>
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-            {COLUMNS.filter((c) => c !== order?.status).map((col) => {
+            {COLUMNS.filter((c) => c !== fromStatus).map((col) => {
               const cs  = COL_STYLES[col];
               const sel = targetCol === col;
               return (
@@ -148,7 +186,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         </div>
 
-        {/* Updated at — always shown when a column is selected */}
+        {/* Updated at */}
         {targetCol && (
           <div style={{ marginBottom: 14, background: '#F8FAFC', borderRadius: 8, padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Updated At</span>
@@ -156,7 +194,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Orders module */}
+        {/* Orders */}
         {fieldConfig.type === 'orders' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
@@ -169,13 +207,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
             </div>
             <div>
               {label('Remarks')}
-              <textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Optional remarks…"
-                rows={2}
-                style={{ ...inp, resize: 'vertical' }}
-              />
+              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional remarks…" rows={2} style={{ ...inp, resize: 'vertical' }} />
             </div>
           </div>
         )}
@@ -226,7 +258,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* No extra fields needed */}
+        {/* No extra fields */}
         {fieldConfig.type === 'none' && targetCol && (
           <div style={{ marginBottom: 14, fontSize: 12, color: '#94A3B8', background: '#F8FAFC', borderRadius: 8, padding: '10px 12px' }}>
             No additional information required for this transition.
