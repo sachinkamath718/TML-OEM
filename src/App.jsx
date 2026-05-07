@@ -72,7 +72,7 @@ export default function App() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
 
-  // ─── Fetch one module ────────────────────────────────────────────────────────
+  // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
     const table = MODULE_TABLE[module];
     const { data, error } = await supabase
@@ -83,7 +83,7 @@ export default function App() {
     return (data || []).map((t) => normalizeTicket(t, module));
   }, []);
 
-  // ─── Initial load ────────────────────────────────────────────────────────────
+  // ─── Initial load ─────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
       setLoading(true);
@@ -110,7 +110,7 @@ export default function App() {
     init();
   }, []); // eslint-disable-line
 
-  // ─── Realtime ────────────────────────────────────────────────────────────────
+  // ─── Realtime ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const channels = MODULES.map((module) => {
       const table = MODULE_TABLE[module];
@@ -137,7 +137,7 @@ export default function App() {
     return () => { channels.forEach((c) => supabase.removeChannel(c)); };
   }, []);
 
-  // ─── Active tickets ──────────────────────────────────────────────────────────
+  // ─── Active tickets ───────────────────────────────────────────────────────
   const tickets = allTickets[activeModule] || [];
 
   const filteredTickets = tickets.filter((t) => {
@@ -148,7 +148,7 @@ export default function App() {
       .some((f) => f.toLowerCase().includes(q));
   });
 
-  // ─── Selection helpers ────────────────────────────────────────────────────────
+  // ─── Selection helpers ────────────────────────────────────────────────────
   function toggleSelect(id) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -168,7 +168,7 @@ export default function App() {
     setBulkMode(false);
   }
 
-  // ─── Write history row ───────────────────────────────────────────────────────
+  // ─── Write history row ────────────────────────────────────────────────────
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
     const { error } = await supabase.from('order_status_history').insert({
       order_id:    ticket.order_id,
@@ -183,7 +183,7 @@ export default function App() {
     if (error) console.warn('History write failed:', error.message);
   }
 
-  // ─── Single move ──────────────────────────────────────────────────────────────
+  // ─── Single move ──────────────────────────────────────────────────────────
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
     const ticket = tickets.find((t) => t.id === moveTarget.id);
@@ -224,7 +224,7 @@ export default function App() {
     setMoveTarget(null);
   }
 
-  // ─── Bulk move ────────────────────────────────────────────────────────────────
+  // ─── Bulk move ────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
     const rawStatus = displayToRaw(targetCol);
@@ -234,13 +234,11 @@ export default function App() {
       await Promise.all(ids.map(async (id) => {
         const ticket = tickets.find((t) => t.id === id);
         if (!ticket) return;
-
         const { error: updateErr } = await supabase
           .from(ticket._table)
           .update({ status: rawStatus, updated_at: updatedAt })
           .eq('id', id);
         if (updateErr) throw updateErr;
-
         await writeHistory(ticket, ticket._rawStatus, rawStatus);
       }));
 
@@ -257,34 +255,36 @@ export default function App() {
     }
   }
 
-  // ─── Create order ─────────────────────────────────────────────────────────────
+  // ─── Create order (simple — VINs only) ───────────────────────────────────
   async function handleCreate(orderPayload, vehicleRows, spocRow) {
     try {
       const { data: orderData, error: orderErr } = await supabase
         .from('orders')
-        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId() })
+        .insert({
+          ...orderPayload,
+          tracking_id: 'TRK-' + generateId(),
+        })
         .select()
         .single();
       if (orderErr) throw orderErr;
 
-      const enrichedVehicles = vehicleRows.map((v) => ({
-        ...v,
-        order_id:    orderData.id,
-        ticket_id:   'TKT-' + generateId(),
-        tracking_id: 'TRK-' + generateId(),
-      }));
+      for (const v of vehicleRows) {
+        const trackingId = 'TRK-' + generateId();
 
-      const { error: vehicleErr } = await supabase.from('order_vehicles').insert(enrichedVehicles);
-      if (vehicleErr) throw vehicleErr;
+        await supabase.from('order_vehicles').insert({
+          order_id:    orderData.id,
+          vin:         v.vin,
+          ticket_id:   'TKT-' + generateId(),
+          tracking_id: trackingId,
+          status:      'pending',
+        });
 
-      const spocRows = enrichedVehicles.map((v) => ({ ...spocRow, tracking_id: v.tracking_id }));
-      await supabase.from('spoc_details').insert(spocRows);
-
-      for (const v of enrichedVehicles) {
-        const base = { vin: v.vin, tracking_id: v.tracking_id, order_id: orderData.id, status: 'pending' };
+        const base = { vin: v.vin, tracking_id: trackingId, order_id: orderData.id, status: 'pending' };
         await supabase.from('shipment_tickets').insert({ ...base, ticket_no: 'SHP-' + generateId() });
         await supabase.from('delivery_tickets').insert({ ...base, ticket_no: 'DLV-' + generateId() });
         await supabase.from('installation_tickets').insert({ ...base, ticket_no: 'INS-' + generateId() });
+        await supabase.from('ais140_tickets').insert({ ...base, ticket_no: 'AIS-' + generateId() });
+        await supabase.from('mining_tickets').insert({ ...base, mining_ticket_no: 'MIN-' + generateId() });
       }
 
       await supabase.from('order_status_history').insert({
@@ -295,6 +295,7 @@ export default function App() {
         notes:       'Order created',
       });
 
+      // Refresh all modules
       for (const mod of MODULES) {
         const fresh = await fetchModule(mod);
         setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
@@ -341,7 +342,9 @@ export default function App() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
             <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
               {tickets.length} total · {inProgressCount} in progress
-              {!loadedMods[activeModule] && <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>}
+              {!loadedMods[activeModule] && (
+                <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>
+              )}
             </div>
           </div>
           <div style={{ flex: 1 }} />
@@ -376,7 +379,7 @@ export default function App() {
             onClick={() => setShowNewOrder(true)}
             style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >
-            + New Order
+            + Add Vehicles
           </button>
         </div>
 
@@ -401,16 +404,37 @@ export default function App() {
       </div>
 
       {detailOrder && (
-        <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }} />
+        <DetailDrawer
+          order={detailOrder}
+          onClose={() => setDetailOrder(null)}
+          onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }}
+        />
       )}
       {moveTarget && (
-        <MoveModal order={moveTarget} module={activeModule} onClose={() => setMoveTarget(null)} onMove={handleMove} />
+        <MoveModal
+          order={moveTarget}
+          module={activeModule}
+          onClose={() => setMoveTarget(null)}
+          onMove={handleMove}
+        />
       )}
       {showBulkMove && (
-        <BulkMoveModal count={selectedIds.size} onClose={() => setShowBulkMove(false)} onConfirm={handleBulkMove} />
+        <BulkMoveModal
+          count={selectedIds.size}
+          onClose={() => setShowBulkMove(false)}
+          onConfirm={handleBulkMove}
+        />
       )}
       {showNewOrder && (
-        <NewOrderModal onClose={() => setShowNewOrder(false)} onCreate={handleCreate} />
+        <NewOrderModal
+          onClose={() => setShowNewOrder(false)}
+          onCreated={async () => {
+            for (const mod of MODULES) {
+              const fresh = await fetchModule(mod);
+              setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
+            }
+          }}
+        />
       )}
     </div>
   );
