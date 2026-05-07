@@ -162,45 +162,46 @@ export default function App() {
   }
 
   // ─── Single move ──────────────────────────────────────────────────────────────
-  async function handleMove(moveData) {
-  await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });    
-    const ticket = tickets.find((t) => t.id === moveTarget.id);
-    if (!ticket) return;
+async function handleMove(moveData) {
+  console.log('handleMove fired', moveData, 'ticket:', moveTarget);
+  const { targetCol, extraFields = {}, notes = '' } = moveData;
+  const ticket = tickets.find((t) => t.id === moveTarget.id);
+  if (!ticket) return;
 
-    const rawStatus      = displayToRaw(targetCol);
-    const updatedAt      = new Date().toISOString();
-    const historyEntry   = {
-      id: 'h-' + generateId(), action: 'Status Changed',
-      from: ticket.status, to: targetCol,
-      timestamp: updatedAt,
-      updatedAt,
-      ...extraFields,
-    };
-    const updatedHistory = [...(ticket.history || []), historyEntry];
-    const updatePayload  = { status: rawStatus, history: updatedHistory, updated_at: updatedAt, ...extraFields };
+  const rawStatus = displayToRaw(targetCol);
+  const updatedAt = new Date().toISOString();
 
-    try {
-      const { error } = await supabase
-        .from(ticket._table)
-        .update(updatePayload)
-        .eq('id', ticket.id);
-      if (error) throw error;
+  const safeExtra = { ...extraFields };
+  delete safeExtra.changed_by;
+  delete safeExtra.notes;
 
-      setAllTickets((prev) => ({
-        ...prev,
-        [activeModule]: (prev[activeModule] || []).map((t) =>
-          t.id === ticket.id ? { ...t, status: targetCol, _rawStatus: rawStatus, history: updatedHistory, ...extraFields } : t
-        ),
-      }));
-      setDetailOrder((prev) =>
-        prev?.id === ticket.id ? { ...prev, status: targetCol, history: updatedHistory } : prev
-      );
-    } catch (err) {
-      alert('Failed to update: ' + err.message);
-    }
-    setMoveTarget(null);
+  try {
+    const { error: updateErr } = await supabase
+      .from(ticket._table)
+      .update({ status: rawStatus, updated_at: updatedAt, ...safeExtra })
+      .eq('id', ticket.id);
+    if (updateErr) throw updateErr;
+
+    await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+
+    setAllTickets((prev) => ({
+      ...prev,
+      [activeModule]: (prev[activeModule] || []).map((t) =>
+        t.id === ticket.id
+          ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+          : t
+      ),
+    }));
+    setDetailOrder((prev) =>
+      prev?.id === ticket.id
+        ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+        : prev
+    );
+  } catch (err) {
+    alert('Failed to update: ' + err.message);
   }
-
+  setMoveTarget(null);
+}
   // ─── Bulk move ────────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
