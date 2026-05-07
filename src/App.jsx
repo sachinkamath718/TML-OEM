@@ -129,7 +129,9 @@ export default function App() {
             return prev;
           });
           if (payload.eventType === 'UPDATE') {
-            setDetailOrder((prev) => prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev);
+            setDetailOrder((prev) =>
+              prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
+            );
           }
         })
         .subscribe();
@@ -170,15 +172,23 @@ export default function App() {
 
   // ─── Write history row ────────────────────────────────────────────────────
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
+    // For Orders module the ticket IS the order, so use ticket.id as order_id
+    const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
+
+    if (!orderId) {
+      console.warn('No order_id found for history write, skipping.');
+      return;
+    }
+
     const { error } = await supabase.from('order_status_history').insert({
-      order_id:    ticket.order_id,
-      vin:         ticket.vin,
+      order_id:    orderId,
+      vin:         ticket.vin         || null,
       stage:       MODULE_STAGE[activeModule],
-      from_status: fromRaw,
+      from_status: fromRaw            || null,
       to_status:   toRaw,
-      changed_by:  extra.changed_by || null,
-      notes:       extra.notes      || null,
-      metadata:    extra.metadata   || null,
+      changed_by:  extra.changed_by   || null,
+      notes:       extra.notes        || null,
+      metadata:    extra.metadata     || null,
     });
     if (error) console.warn('History write failed:', error.message);
   }
@@ -192,6 +202,7 @@ export default function App() {
     const rawStatus = displayToRaw(targetCol);
     const updatedAt = new Date().toISOString();
 
+    // Remove non-column fields before sending to Supabase
     const safeExtra = { ...extraFields };
     delete safeExtra.changed_by;
     delete safeExtra.notes;
@@ -255,15 +266,12 @@ export default function App() {
     }
   }
 
-  // ─── Create order (simple — VINs only) ───────────────────────────────────
+  // ─── Create order (simple VIN-only flow) ─────────────────────────────────
   async function handleCreate(orderPayload, vehicleRows, spocRow) {
     try {
       const { data: orderData, error: orderErr } = await supabase
         .from('orders')
-        .insert({
-          ...orderPayload,
-          tracking_id: 'TRK-' + generateId(),
-        })
+        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId() })
         .select()
         .single();
       if (orderErr) throw orderErr;
@@ -287,11 +295,14 @@ export default function App() {
         await supabase.from('mining_tickets').insert({ ...base, mining_ticket_no: 'MIN-' + generateId() });
       }
 
+      // Write creation history for the order
       await supabase.from('order_status_history').insert({
         order_id:    orderData.id,
+        vin:         null,
         stage:       'order',
         from_status: null,
         to_status:   'pending',
+        changed_by:  null,
         notes:       'Order created',
       });
 
@@ -353,11 +364,17 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, padding: '5px 12px' }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#1D4ED8' }}>{selectedIds.size} selected</span>
               {selectedIds.size > 0 && (
-                <button onClick={() => setShowBulkMove(true)} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 7, border: 'none', background: '#2563EB', color: '#fff', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                <button
+                  onClick={() => setShowBulkMove(true)}
+                  style={{ fontSize: 12, padding: '4px 12px', borderRadius: 7, border: 'none', background: '#2563EB', color: '#fff', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
                   Move Selected →
                 </button>
               )}
-              <button onClick={exitBulkMode} style={{ fontSize: 12, padding: '4px 10px', borderRadius: 7, border: '1px solid #BFDBFE', background: '#fff', color: '#2563EB', cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button
+                onClick={exitBulkMode}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 7, border: '1px solid #BFDBFE', background: '#fff', color: '#2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
                 Cancel
               </button>
             </div>
