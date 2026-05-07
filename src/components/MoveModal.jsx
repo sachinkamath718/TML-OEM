@@ -54,7 +54,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   );
 
   function handleConfirm() {
-    if (!targetCol) return setError('Please select a target status.');
+    console.log('handleConfirm fired', { targetCol, fieldConfig });
 
     // extraFields = only real DB columns for the ticket table
     // notes       = goes to order_status_history only (handled in App.jsx writeHistory)
