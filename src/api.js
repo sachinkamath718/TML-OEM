@@ -1,6 +1,6 @@
-const BASE_URL = '/tml-api';
-const CLIENT_ID = 'tml-client-id';
-const CLIENT_SECRET = 'tml-client-secret';
+const CVP_BASE   = '/cvp-api';
+const CVP_ID     = 'itriangle';
+const CVP_SECRET = '6p0ifiTHAQTLIKRLwofKbryAcWfU3Htw';
 
 let _token = null;
 let _tokenExpiresAt = 0;
@@ -9,34 +9,34 @@ async function getToken() {
   if (_token && Date.now() < _tokenExpiresAt - 60_000) return _token;
 
   const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    grant_type: 'client_credentials',
+    client_id:     CVP_ID,
+    client_secret: CVP_SECRET,
+    grant_type:    'client_credentials',
   });
 
-  const res = await fetch(`${BASE_URL}/auth/token`, {
-    method: 'POST',
+  const res  = await fetch(`${CVP_BASE}/auth/realms/cvp/protocol/openid-connect/token`, {
+    method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
 
   const json = await res.json();
-  const tok = json.access_token || json?.data?.access_token;
-  if (!tok) throw new Error('Token fetch failed: ' + JSON.stringify(json));
+  const tok  = json.access_token;
+  if (!tok) throw new Error('Token failed: ' + JSON.stringify(json));
 
-  _token = tok;
-  _tokenExpiresAt = Date.now() + 12 * 60 * 60 * 1000;
+  _token           = tok;
+  _tokenExpiresAt  = Date.now() + (json.expires_in ? json.expires_in * 1000 : 24 * 60 * 60 * 1000);
   return _token;
 }
 
 async function apiFetch(path, options = {}, retry = true) {
   const token = await getToken();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res   = await fetch(`${CVP_BASE}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
+      'Content-Type':  'application/json',
+      Accept:          'application/json',
+      Authorization:   `Bearer ${token}`,
       ...(options.headers || {}),
     },
   });
@@ -50,101 +50,76 @@ async function apiFetch(path, options = {}, retry = true) {
   return { ok: res.ok, status: res.status, json };
 }
 
-export async function generateToken() {
+// ─── 1. Device Fitment Webhook ────────────────────────────────────────────────
+/**
+ * payload: { trackingId, vin, stage, updatedAt, metadata: { iccId } }
+ */
+export async function deviceFitmentWebhook(payload) {
   try {
-    _token = null;
-    const tok = await getToken();
-    return { data: tok, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function createOrder(payload) {
-  try {
-    const { ok, json } = await apiFetch('/order', {
+    const { ok, json } = await apiFetch('/webhooks/device-fitment', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body:   JSON.stringify(payload),
     });
     if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
+    return { data: json, error: null };
   } catch (e) {
     return { data: null, error: e.message };
   }
 }
 
-export async function getOrderStatus(trackingId) {
+// ─── 2. AIS140 Request Update Webhook ────────────────────────────────────────
+/**
+ * payload: {
+ *   vin, ticketNo, status, remark, handler, handlerContact,
+ *   processEndDateTime, certificationRegistrationDate,
+ *   certificationExpiryDate, certificateFileLocation,
+ *   certificateFileNames, metadata
+ * }
+ */
+export async function ais140RequestUpdate(payload) {
+  try {
+    const { ok, json } = await apiFetch('/webhooks/v2/ais140-requests', {
+      method: 'POST',
+      body:   JSON.stringify(payload),
+    });
+    if (!ok) return { data: null, error: JSON.stringify(json) };
+    return { data: json, error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+}
+
+// ─── 3. Mining Request Update Webhook ────────────────────────────────────────
+/**
+ * payload: {
+ *   vin, department, ticketNo, status, remark,
+ *   handler, handlerContact, expiryDate, metadata
+ * }
+ */
+export async function miningRequestUpdate(payload) {
+  try {
+    const { ok, json } = await apiFetch('/webhooks/mining-requests', {
+      method: 'POST',
+      body:   JSON.stringify(payload),
+    });
+    if (!ok) return { data: null, error: JSON.stringify(json) };
+    return { data: json, error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+}
+
+// ─── 4. Get Device Status ─────────────────────────────────────────────────────
+/**
+ * vin: vehicle VIN string
+ */
+export async function getDeviceStatus(vin) {
   try {
     const { ok, json } = await apiFetch(
-      `/order/status?trackingId=${encodeURIComponent(trackingId)}`
+      `/device-status?vehicle-id=${encodeURIComponent(vin)}`
     );
     if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function updateSpoc(payload) {
-  try {
-    const { ok, json } = await apiFetch('/order/fitment/spoc', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-    if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function createAIS140Request(vehicles) {
-  try {
-    const { ok, json } = await apiFetch('/ais140', {
-      method: 'POST',
-      body: JSON.stringify(vehicles),
-    });
-    if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function createMiningRequest(vehicles) {
-  try {
-    const { ok, json } = await apiFetch('/mining', {
-      method: 'POST',
-      body: JSON.stringify(vehicles),
-    });
-    if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function getAIS140TicketStatus(tickets) {
-  try {
-    const { ok, json } = await apiFetch('/ais140/ticket-status', {
-      method: 'POST',
-      body: JSON.stringify({ err: null, data: tickets }),
-    });
-    if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
-  } catch (e) {
-    return { data: null, error: e.message };
-  }
-}
-
-export async function getMiningTicketStatus(tickets) {
-  try {
-    const { ok, json } = await apiFetch('/mining/ticket-status', {
-      method: 'POST',
-      body: JSON.stringify({ err: null, data: tickets }),
-    });
-    if (!ok) return { data: null, error: JSON.stringify(json) };
-    return { data: json.data, error: null };
+    return { data: json, error: null };
   } catch (e) {
     return { data: null, error: e.message };
   }
