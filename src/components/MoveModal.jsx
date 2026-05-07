@@ -10,42 +10,31 @@ const COL_STYLES = {
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
 };
 
-// Normalize raw DB status → display status, in case raw leaks through
 function toDisplayStatus(status) {
   const map = {
-    pending:     'Pending',
-    in_progress: 'In Progress',
-    completed:   'Completed',
-    on_hold:     'On Hold',
-    failed:      'Failed',
-    // already display — pass through
-    'Pending':     'Pending',
-    'In Progress': 'In Progress',
-    'Completed':   'Completed',
-    'On Hold':     'On Hold',
-    'Failed':      'Failed',
+    pending: 'Pending', in_progress: 'In Progress', completed: 'Completed',
+    on_hold: 'On Hold', failed: 'Failed',
+    'Pending': 'Pending', 'In Progress': 'In Progress', 'Completed': 'Completed',
+    'On Hold': 'On Hold', 'Failed': 'Failed',
   };
   return map[status] || 'Pending';
 }
 
-function getFieldConfig(module, fromStatus, toStatus) {
+function getFieldConfig(module, toStatus) {
   if (module === 'Orders') return { type: 'orders' };
 
   if (module === 'Shipment') {
-    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'none' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'shipment_complete' };
+    if (toStatus === 'Completed') return { type: 'shipment_complete' };
     return { type: 'none' };
   }
 
   if (module === 'Delivery') {
-    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'none' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'delivery_complete' };
+    if (toStatus === 'Completed') return { type: 'delivery_complete' };
     return { type: 'none' };
   }
 
   if (module === 'Installation') {
-    if (fromStatus === 'Pending'     && toStatus === 'In Progress') return { type: 'installation_start' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed')   return { type: 'none' };
+    if (toStatus === 'In Progress' || toStatus === 'Completed') return { type: 'installation_start' };
     return { type: 'none' };
   }
 
@@ -65,16 +54,15 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   const [deliveredTo,  setDeliveredTo]  = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
 
-  // Installation start
+  // Installation
   const [technicianName, setTechnicianName] = useState('');
   const [scheduledDate,  setScheduledDate]  = useState('');
 
   const [error, setError] = useState('');
 
-  // Always work with display status — defensive normalize
   const fromStatus  = toDisplayStatus(order?.status);
   const updatedAt   = new Date().toISOString();
-  const fieldConfig = targetCol ? getFieldConfig(module, fromStatus, targetCol) : { type: 'none' };
+  const fieldConfig = targetCol ? getFieldConfig(module, targetCol) : { type: 'none' };
 
   const inp = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -154,7 +142,13 @@ export default function MoveModal({ order, module, onClose, onMove }) {
         {/* Current status badge */}
         <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Current:</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: COL_STYLES[fromStatus]?.text, background: COL_STYLES[fromStatus]?.bg, border: `1px solid ${COL_STYLES[fromStatus]?.border}`, borderRadius: 10, padding: '2px 10px' }}>
+          <span style={{
+            fontSize: 11, fontWeight: 700,
+            color: COL_STYLES[fromStatus]?.text,
+            background: COL_STYLES[fromStatus]?.bg,
+            border: `1px solid ${COL_STYLES[fromStatus]?.border}`,
+            borderRadius: 10, padding: '2px 10px',
+          }}>
             {fromStatus}
           </span>
         </div>
@@ -207,12 +201,18 @@ export default function MoveModal({ order, module, onClose, onMove }) {
             </div>
             <div>
               {label('Remarks')}
-              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional remarks…" rows={2} style={{ ...inp, resize: 'vertical' }} />
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Optional remarks…"
+                rows={2}
+                style={{ ...inp, resize: 'vertical' }}
+              />
             </div>
           </div>
         )}
 
-        {/* Shipment: In Progress → Completed */}
+        {/* Shipment → Completed */}
         {fieldConfig.type === 'shipment_complete' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
@@ -230,7 +230,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Delivery: In Progress → Completed */}
+        {/* Delivery → Completed */}
         {fieldConfig.type === 'delivery_complete' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
@@ -244,7 +244,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Installation: Pending → In Progress */}
+        {/* Installation → In Progress or Completed */}
         {fieldConfig.type === 'installation_start' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
