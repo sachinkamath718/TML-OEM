@@ -44,7 +44,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
     border: '1px solid #D1D5DB', fontSize: 12, outline: 'none',
     boxSizing: 'border-box', fontFamily: 'Inter, system-ui, sans-serif', background: '#fff',
   };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 };
+  const labelStyle  = { fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 };
   const sectionStyle = { borderTop: '1px solid #F3F4F6', paddingTop: 14, marginBottom: 14 };
   const sectionTitle = { fontSize: 12, fontWeight: 700, color: '#111827', marginBottom: 10 };
 
@@ -54,7 +54,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
   function toggleProduct(vehicleId, productName) {
     setVehicles((prev) => prev.map((v) => {
       if (v.id !== vehicleId) return v;
-      const exists = v.products.find((p) => p.name === productName);
+      const exists   = v.products.find((p) => p.name === productName);
       const products = exists
         ? v.products.filter((p) => p.name !== productName)
         : [...v.products, { name: productName, duration_in_years: 2, metadata: null }];
@@ -67,7 +67,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
       return { ...v, products: v.products.map((p) => p.name === productName ? { ...p, duration_in_years: Number(duration) } : p) };
     }));
   }
-  function addVehicle() { setVehicles((prev) => [...prev, emptyVehicle()]); }
+  function addVehicle()      { setVehicles((prev) => [...prev, emptyVehicle()]); }
   function removeVehicle(id) {
     if (vehicles.length === 1) return;
     setVehicles((prev) => prev.filter((v) => v.id !== id));
@@ -91,58 +91,33 @@ export default function NewOrderModal({ onClose, onCreate }) {
     setError('');
     setLoading(true);
 
-    const tmlPayload = {
-      order_id: 'TML-ORD-' + generateId().slice(0, 10).toUpperCase(),
-      customer_details: {
-        name:           custName.trim(),
-        pan:            custPan.trim().toUpperCase(),
-        gst:            custGst.trim().toUpperCase(),
-        email:          custEmail.trim().toLowerCase(),
-        contact_number: formatPhone(custContact),
-      },
-      location_mappings: [{
-        location: {
-          id:       'LOC-' + generateId().slice(0, 6).toUpperCase(),
-          address:  locAddress.trim(),
-          city:     locCity.trim(),
-          pincode:  locPincode.trim(),
-          district: locDistrict.trim(),
-          state:    locState.trim(),
-        },
-        spoc: {
-          name:           spocName.trim(),
-          contact_number: formatPhone(spocPhone),
-          email:          spocEmail.trim().toLowerCase(),
-        },
-        vehicle_details: vehicles.map((v) => ({
-          vin:             v.vin.trim().toUpperCase(),
-          registration_no: v.registration_no.trim().toUpperCase(),
-          engine_no:       v.engine_no.trim().toUpperCase(),
-          model:           v.model.trim(),
-          make:            v.make.trim().toUpperCase(),
-          variant:         v.variant.trim(),
-          mfg_year:        String(v.mfg_year).trim(),
-          fuel_type:       v.fuel_type,
-          emission_type:   v.emission_type,
-          rto_office_code: v.rto_office_code.trim().toUpperCase(),
-          rto_state:       v.rto_state.trim().toUpperCase(),
-          products:        v.products.map((p) => ({
-            ...p,
-            duration_in_years: p.duration_in_years ? Number(p.duration_in_years) : null,
-          })),
-        })),
-      }],
+    // ── Build Supabase payload ─────────────────────────────────────────────
+    const orderNumber = 'ORD-' + generateId().slice(0, 10).toUpperCase();
+
+    const customerDetails = {
+      name:           custName.trim(),
+      pan:            custPan.trim().toUpperCase(),
+      gst:            custGst.trim().toUpperCase(),
+      email:          custEmail.trim().toLowerCase(),
+      contact_number: formatPhone(custContact),
     };
 
-    // Supabase payload — matches new schema
+    const locationMeta = {
+      address:  locAddress.trim(),
+      city:     locCity.trim(),
+      pincode:  locPincode.trim(),
+      district: locDistrict.trim(),
+      state:    locState.trim(),
+    };
+
     const orderPayload = {
-      order_number:     tmlPayload.order_id,
+      order_number:     orderNumber,
       oem_name:         title.trim(),
       total_vehicles:   vehicles.length,
       status:           'pending',
-      customer_details: tmlPayload.customer_details,
+      customer_details: customerDetails,
       created_by:       spocName.trim(),
-      metadata:         { priority, location: tmlPayload.location_mappings[0].location },
+      metadata:         { priority, location: locationMeta },
     };
 
     const vehicleRows = vehicles.map((v) => ({
@@ -157,8 +132,11 @@ export default function NewOrderModal({ onClose, onCreate }) {
       emission_type:   v.emission_type,
       rto_office_code: v.rto_office_code.trim().toUpperCase(),
       rto_state:       v.rto_state.trim().toUpperCase(),
-      products:        v.products.map((p) => ({ ...p, duration_in_years: p.duration_in_years ? Number(p.duration_in_years) : null })),
-      status:          'pending',
+      products:        v.products.map((p) => ({
+        ...p,
+        duration_in_years: p.duration_in_years ? Number(p.duration_in_years) : null,
+      })),
+      status: 'pending',
     }));
 
     const spocRow = {
@@ -167,7 +145,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
       email:      spocEmail.trim().toLowerCase(),
     };
 
-    onCreate(tmlPayload, orderPayload, vehicleRows, spocRow);
+    onCreate(orderPayload, vehicleRows, spocRow);
     setLoading(false);
   }
 
@@ -176,7 +154,7 @@ export default function NewOrderModal({ onClose, onCreate }) {
       <div style={{ background: '#fff', borderRadius: 16, padding: '24px 28px', width: 680, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }} onClick={(e) => e.stopPropagation()}>
 
         <div style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginBottom: 2 }}>Create Bulk Order</div>
-        <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 18 }}>Fills all required TML API fields. Each vehicle is tracked across all modules.</div>
+        <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 18 }}>Add multiple vehicles under one order. Each vehicle is tracked across all modules.</div>
 
         {/* Order Info */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
