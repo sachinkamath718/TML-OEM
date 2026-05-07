@@ -1,11 +1,5 @@
 import { useState } from 'react';
 
-const PRIORITY_DOT = {
-  High:   '#EF4444',
-  Medium: '#F59E0B',
-  Low:    '#10B981',
-};
-
 export default function TicketCard({ order, onMoveClick, onHistoryClick, selected, onSelect, bulkMode }) {
   const [hovered, setHovered] = useState(false);
 
@@ -52,9 +46,6 @@ export default function TicketCard({ order, onMoveClick, onHistoryClick, selecte
           )}
         </div>
       )}
-
-      {/* Priority dot */}
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: PRIORITY_DOT[order.priority] || '#F59E0B', flexShrink: 0 }} />
 
       {/* VIN + Tracking ID */}
       <div style={{ flex: 1, minWidth: 0 }}>
