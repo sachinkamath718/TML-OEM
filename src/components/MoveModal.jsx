@@ -10,26 +10,11 @@ const COL_STYLES = {
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
 };
 
-// Returns which extra fields to show based on module + from + to
 function getFieldConfig(module, fromStatus, toStatus) {
-  if (module === 'Orders') {
-    return { type: 'orders' }; // order_id readonly, created_by readonly, remarks optional
-  }
-  if (module === 'Shipment') {
-    if (fromStatus === 'Pending' && toStatus === 'In Progress') return { type: 'none' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed') return { type: 'shipment_complete' };
-    return { type: 'none' };
-  }
-  if (module === 'Delivery') {
-    if (fromStatus === 'Pending' && toStatus === 'In Progress') return { type: 'none' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed') return { type: 'delivery_complete' };
-    return { type: 'none' };
-  }
-  if (module === 'Installation') {
-    if (fromStatus === 'Pending' && toStatus === 'In Progress') return { type: 'installation_start' };
-    if (fromStatus === 'In Progress' && toStatus === 'Completed') return { type: 'none' };
-    return { type: 'none' };
-  }
+  if (module === 'Orders')       return { type: 'orders' };
+  if (module === 'Shipment')     return fromStatus === 'In Progress' && toStatus === 'Completed' ? { type: 'shipment_complete' } : { type: 'none' };
+  if (module === 'Delivery')     return fromStatus === 'In Progress' && toStatus === 'Completed' ? { type: 'delivery_complete' } : { type: 'none' };
+  if (module === 'Installation') return fromStatus === 'Pending'     && toStatus === 'In Progress' ? { type: 'installation_start' } : { type: 'none' };
   return { type: 'none' };
 }
 
@@ -43,8 +28,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   const [expectedDelivery, setExpectedDelivery] = useState('');
 
   // Delivery complete
-  const [deliveredTo,   setDeliveredTo]   = useState('');
-  const [deliveryDate,  setDeliveryDate]  = useState('');
+  const [deliveredTo,  setDeliveredTo]  = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
 
   // Installation start
   const [technicianName, setTechnicianName] = useState('');
@@ -71,39 +56,63 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   function handleConfirm() {
     if (!targetCol) return setError('Please select a target status.');
 
-    const extraFields = { updated_at: updatedAt };
+    // extraFields = only real DB columns for the ticket table
+    // notes       = goes to order_status_history only (handled in App.jsx writeHistory)
+    const extraFields = {};
+    let notes = '';
 
     if (fieldConfig.type === 'shipment_complete') {
       if (!courier.trim())        return setError('Courier is required.');
       if (!trackingNumber.trim()) return setError('Tracking number is required.');
       if (!expectedDelivery)      return setError('Expected delivery date is required.');
-      Object.assign(extraFields, { courier, awb_number: trackingNumber, expected_delivery: expectedDelivery });
+      // courier, awb_number, expected_delivery are real columns on shipment_tickets
+      Object.assign(extraFields, {
+        courier,
+        awb_number:        trackingNumber,
+        expected_delivery: expectedDelivery,
+      });
     }
 
     if (fieldConfig.type === 'delivery_complete') {
-      if (!deliveredTo.trim())  return setError('Delivered To is required.');
-      if (!deliveryDate)        return setError('Delivery date is required.');
-      Object.assign(extraFields, { delivered_to: deliveredTo, delivery_date: deliveryDate });
+      if (!deliveredTo.trim()) return setError('Delivered To is required.');
+      if (!deliveryDate)       return setError('Delivery date is required.');
+      // delivered_to, delivery_date are real columns on delivery_tickets
+      Object.assign(extraFields, {
+        delivered_to:  deliveredTo,
+        delivery_date: deliveryDate,
+      });
     }
 
     if (fieldConfig.type === 'installation_start') {
       if (!technicianName.trim()) return setError('Technician name is required.');
       if (!scheduledDate)         return setError('Scheduled date is required.');
-      Object.assign(extraFields, { technician_name: technicianName, scheduled_date: scheduledDate });
+      // technician_name, scheduled_date are real columns on installation_tickets
+      Object.assign(extraFields, {
+        technician_name: technicianName,
+        scheduled_date:  scheduledDate,
+      });
     }
 
     if (fieldConfig.type === 'orders' && remarks.trim()) {
-      extraFields.remarks = remarks;
+      // orders table has no `remarks` column — store in metadata JSONB
+      // and also pass as notes for the history row
+      extraFields.metadata = { ...(order?.metadata || {}), remarks: remarks.trim() };
+      notes = remarks.trim();
     }
 
     setError('');
-    onMove({ targetCol, extraFields });
+    onMove({ targetCol, extraFields, notes });
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }} onClick={onClose}>
-      <div style={{ background: '#fff', borderRadius: 14, padding: '26px 28px', width: 480, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', fontFamily: "'DM Sans', system-ui, sans-serif" }} onClick={(e) => e.stopPropagation()}>
-
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 14, padding: '26px 28px', width: 480, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', fontFamily: "'DM Sans', system-ui, sans-serif" }}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#0F172A', marginBottom: 2 }}>Move Ticket</div>
@@ -120,20 +129,26 @@ export default function MoveModal({ order, module, onClose, onMove }) {
               const cs  = COL_STYLES[col];
               const sel = targetCol === col;
               return (
-                <button key={col} onClick={() => { setTargetCol(col); setError(''); }} style={{
-                  fontSize: 12, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
-                  fontWeight: sel ? 700 : 500,
-                  border: `1.5px solid ${sel ? cs.border : '#E2E8F0'}`,
-                  background: sel ? cs.bg : '#F8FAFC',
-                  color: sel ? cs.text : '#64748B',
-                  fontFamily: 'inherit', transition: 'all 0.1s',
-                }}>{col}</button>
+                <button
+                  key={col}
+                  onClick={() => { setTargetCol(col); setError(''); }}
+                  style={{
+                    fontSize: 12, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
+                    fontWeight: sel ? 700 : 500,
+                    border: `1.5px solid ${sel ? cs.border : '#E2E8F0'}`,
+                    background: sel ? cs.bg : '#F8FAFC',
+                    color: sel ? cs.text : '#64748B',
+                    fontFamily: 'inherit', transition: 'all 0.1s',
+                  }}
+                >
+                  {col}
+                </button>
               );
             })}
           </div>
         </div>
 
-        {/* Updated at — always shown */}
+        {/* Updated at — always shown when a column is selected */}
         {targetCol && (
           <div style={{ marginBottom: 14, background: '#F8FAFC', borderRadius: 8, padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Updated At</span>
@@ -141,7 +156,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Orders module fields */}
+        {/* Orders module */}
         {fieldConfig.type === 'orders' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
@@ -150,11 +165,17 @@ export default function MoveModal({ order, module, onClose, onMove }) {
             </div>
             <div>
               {label('Created By')}
-              <input value="System" readOnly style={readonlyInp} />
+              <input value={order?.created_by || 'System'} readOnly style={readonlyInp} />
             </div>
             <div>
               {label('Remarks')}
-              <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Optional remarks…" rows={2} style={{ ...inp, resize: 'vertical' }} />
+              <textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Optional remarks…"
+                rows={2}
+                style={{ ...inp, resize: 'vertical' }}
+              />
             </div>
           </div>
         )}
@@ -167,11 +188,11 @@ export default function MoveModal({ order, module, onClose, onMove }) {
               <input value={courier} onChange={(e) => setCourier(e.target.value)} placeholder="e.g. Blue Dart" style={inp} />
             </div>
             <div>
-              {label('Tracking Number', true)}
-              <input value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} placeholder="AWB / Tracking No." style={inp} />
+              {label('AWB / Tracking Number', true)}
+              <input value={trackingNumber} onChange={(e) => setTrackingNumber(e.target.value)} placeholder="AWB number" style={inp} />
             </div>
             <div>
-              {label('Expected Delivery', true)}
+              {label('Expected Delivery Date', true)}
               <input type="date" value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} style={inp} />
             </div>
           </div>
@@ -205,7 +226,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* No fields needed */}
+        {/* No extra fields needed */}
         {fieldConfig.type === 'none' && targetCol && (
           <div style={{ marginBottom: 14, fontSize: 12, color: '#94A3B8', background: '#F8FAFC', borderRadius: 8, padding: '10px 12px' }}>
             No additional information required for this transition.
@@ -213,14 +234,23 @@ export default function MoveModal({ order, module, onClose, onMove }) {
         )}
 
         {error && (
-          <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', padding: '8px 12px', borderRadius: 7, marginBottom: 14 }}>{error}</div>
+          <div style={{ fontSize: 12, color: '#DC2626', background: '#FEF2F2', padding: '8px 12px', borderRadius: 7, marginBottom: 14 }}>
+            {error}
+          </div>
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#F8FAFC', fontSize: 13, cursor: 'pointer', color: '#374151', fontFamily: 'inherit' }}>
+          <button
+            onClick={onClose}
+            style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#F8FAFC', fontSize: 13, cursor: 'pointer', color: '#374151', fontFamily: 'inherit' }}
+          >
             Cancel
           </button>
-          <button onClick={handleConfirm} disabled={!targetCol} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: targetCol ? '#2563EB' : '#CBD5E1', color: '#fff', fontSize: 13, fontWeight: 600, cursor: targetCol ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+          <button
+            onClick={handleConfirm}
+            disabled={!targetCol}
+            style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: targetCol ? '#2563EB' : '#CBD5E1', color: '#fff', fontSize: 13, fontWeight: 600, cursor: targetCol ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+          >
             Confirm Move
           </button>
         </div>
