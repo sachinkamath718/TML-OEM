@@ -1,3 +1,11 @@
+export function generateId() {
+  return Math.random().toString(36).substr(2, 9).toUpperCase();
+}
+
+export function generateTrackingId() {
+  return 'TRK-' + Date.now().toString(36).toUpperCase();
+}
+
 export function formatDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -15,4 +23,9 @@ export function formatDate(iso) {
       timeZone: 'Asia/Kolkata',
     })
   );
+}
+
+export function getInitials(name) {
+  if (!name) return '?';
+  return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
 }
