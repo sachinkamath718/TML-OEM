@@ -74,6 +74,43 @@ export default function App() {
 
   // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
+    // Orders: join order_vehicles to get VINs and vehicle details
+    if (module === 'Orders') {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, order_vehicles(vin, registration_no, model, make, engine_no, fuel_type, emission_type, mfg_year, rto_office_code, rto_state, tracking_id)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      const rows = [];
+      for (const order of data || []) {
+        const vehicles = order.order_vehicles || [];
+        if (vehicles.length === 0) {
+          rows.push(normalizeTicket({ ...order, order_vehicles: undefined }, module));
+        } else {
+          for (const v of vehicles) {
+            rows.push(normalizeTicket({
+              ...order,
+              vin:             v.vin,
+              registration_no: v.registration_no,
+              model:           v.model,
+              make:            v.make,
+              engine_no:       v.engine_no,
+              fuel_type:       v.fuel_type,
+              emission_type:   v.emission_type,
+              mfg_year:        v.mfg_year,
+              rto_office_code: v.rto_office_code,
+              rto_state:       v.rto_state,
+              tracking_id:     v.tracking_id || order.tracking_id,
+              order_vehicles:  undefined,
+            }, module));
+          }
+        }
+      }
+      return rows;
+    }
+
+    // All other modules
     const table = MODULE_TABLE[module];
     const { data, error } = await supabase
       .from(table)
@@ -117,6 +154,13 @@ export default function App() {
       return supabase
         .channel(`${table}-rt`)
         .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+          // For Orders module, re-fetch to get joined vehicle data
+          if (module === 'Orders') {
+            fetchModule('Orders').then((rows) => {
+              setAllTickets((prev) => ({ ...prev, Orders: rows }));
+            });
+            return;
+          }
           setAllTickets((prev) => {
             const current = prev[module] || [];
             if (payload.eventType === 'INSERT') {
@@ -137,7 +181,7 @@ export default function App() {
         .subscribe();
     });
     return () => { channels.forEach((c) => supabase.removeChannel(c)); };
-  }, []);
+  }, [fetchModule]);
 
   // ─── Active tickets ───────────────────────────────────────────────────────
   const tickets = allTickets[activeModule] || [];
@@ -182,69 +226,74 @@ export default function App() {
 
     const { error } = await supabase.from('order_status_history').insert({
       order_id:    orderId,
-      vin:         ticket.vin         || null,
+      vin:         ticket.vin       || null,
       stage:       MODULE_STAGE[activeModule],
-      from_status: fromRaw            || null,
+      from_status: fromRaw          || null,
       to_status:   toRaw,
-      changed_by:  extra.changed_by   || null,
-      notes:       extra.notes        || null,
-      metadata:    extra.metadata     || null,
+      changed_by:  extra.changed_by || null,
+      notes:       extra.notes      || null,
+      metadata:    extra.metadata   || null,
     });
     if (error) console.warn('History write failed:', error.message);
   }
 
   // ─── Single move ──────────────────────────────────────────────────────────
- async function handleMove(moveData) {
-  const { targetCol, extraFields = {}, notes = '' } = moveData;
-  const ticket = tickets.find((t) => t.id === moveTarget.id);
-  if (!ticket) return;
+  async function handleMove(moveData) {
+    const { targetCol, extraFields = {}, notes = '' } = moveData;
+    const ticket = tickets.find((t) => t.id === moveTarget.id);
+    if (!ticket) return;
 
-  const rawStatus = displayToRaw(targetCol);
-  const updatedAt = new Date().toISOString();
+    const rawStatus = displayToRaw(targetCol);
 
-  const safeExtra = { ...extraFields };
-  delete safeExtra.changed_by;
-  delete safeExtra.notes;
+    const safeExtra = { ...extraFields };
+    delete safeExtra.changed_by;
+    delete safeExtra.notes;
 
-  try {
-    // Don't include updated_at — not all tables have this column
-    const updatePayload = { status: rawStatus, ...safeExtra };
+    try {
+      const updatePayload = { status: rawStatus, ...safeExtra };
 
-    const { error: updateErr } = await supabase
-      .from(ticket._table)
-      .update(updatePayload)
-      .eq('id', ticket.id);
-    if (updateErr) throw updateErr;
+      const { error: updateErr } = await supabase
+        .from(ticket._table)
+        .update(updatePayload)
+        .eq('id', ticket.id);
+      if (updateErr) throw updateErr;
 
-    await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
 
-    // Force update local state with new status
-    setAllTickets((prev) => ({
-      ...prev,
-      [activeModule]: (prev[activeModule] || []).map((t) =>
-        t.id === ticket.id
-          ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-          : t
-      ),
-    }));
-
-    // Force update detail drawer
-    setDetailOrder((prev) =>
-      prev?.id === ticket.id
-        ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-        : prev
-    );
-
-  } catch (err) {
-    alert('Failed to update: ' + err.message);
+      // For Orders, re-fetch to keep VIN join in sync
+      if (activeModule === 'Orders') {
+        const fresh = await fetchModule('Orders');
+        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
+        setDetailOrder((prev) => {
+          if (!prev || prev.id !== ticket.id) return prev;
+          const updated = fresh.find((t) => t.id === ticket.id);
+          return updated || { ...prev, status: targetCol, _rawStatus: rawStatus };
+        });
+      } else {
+        setAllTickets((prev) => ({
+          ...prev,
+          [activeModule]: (prev[activeModule] || []).map((t) =>
+            t.id === ticket.id
+              ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+              : t
+          ),
+        }));
+        setDetailOrder((prev) =>
+          prev?.id === ticket.id
+            ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
+            : prev
+        );
+      }
+    } catch (err) {
+      alert('Failed to update: ' + err.message);
+    }
+    setMoveTarget(null);
   }
-  setMoveTarget(null);
-}
+
   // ─── Bulk move ────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
     const rawStatus = displayToRaw(targetCol);
-    const updatedAt = new Date().toISOString();
 
     try {
       await Promise.all(ids.map(async (id) => {
@@ -252,18 +301,23 @@ export default function App() {
         if (!ticket) return;
         const { error: updateErr } = await supabase
           .from(ticket._table)
-          .update({ status: rawStatus, updated_at: updatedAt })
+          .update({ status: rawStatus })
           .eq('id', id);
         if (updateErr) throw updateErr;
         await writeHistory(ticket, ticket._rawStatus, rawStatus);
       }));
 
-      setAllTickets((prev) => ({
-        ...prev,
-        [activeModule]: (prev[activeModule] || []).map((t) =>
-          selectedIds.has(t.id) ? { ...t, status: targetCol, _rawStatus: rawStatus } : t
-        ),
-      }));
+      if (activeModule === 'Orders') {
+        const fresh = await fetchModule('Orders');
+        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
+      } else {
+        setAllTickets((prev) => ({
+          ...prev,
+          [activeModule]: (prev[activeModule] || []).map((t) =>
+            selectedIds.has(t.id) ? { ...t, status: targetCol, _rawStatus: rawStatus } : t
+          ),
+        }));
+      }
       exitBulkMode();
       setShowBulkMove(false);
     } catch (err) {
@@ -300,7 +354,6 @@ export default function App() {
         await supabase.from('mining_tickets').insert({ ...base, mining_ticket_no: 'MIN-' + generateId() });
       }
 
-      // Write creation history for the order
       await supabase.from('order_status_history').insert({
         order_id:    orderData.id,
         vin:         null,
@@ -311,7 +364,6 @@ export default function App() {
         notes:       'Order created',
       });
 
-      // Refresh all modules
       for (const mod of MODULES) {
         const fresh = await fetchModule(mod);
         setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
