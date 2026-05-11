@@ -5,7 +5,7 @@ const COLUMNS = ['Pending', 'In Progress', 'Completed', 'On Hold', 'Failed'];
 const COL_STYLES = {
   Pending:       { bg: '#F0F4FF', text: '#3B5BDB', border: '#C5D0FF' },
   'In Progress': { bg: '#FFF8F0', text: '#D9480F', border: '#FFD8A8' },
-  Completed:     { bg: '#F0FFF4', text: '#1A7340', border: '#B2F2BB' },
+  Completed:     { bg: '#F0FFF4', text: '#1A7340', border: '#B2F2BB' },  
   'On Hold':     { bg: '#FFFDF0', text: '#966A00', border: '#FFE066' },
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
 };
