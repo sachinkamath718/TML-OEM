@@ -20,24 +20,12 @@ function toDisplayStatus(status) {
   return map[status] || 'Pending';
 }
 
-function getFieldConfig(module, toStatus) {
-  if (module === 'Orders') return { type: 'orders' };
-
-  if (module === 'Shipment') {
-    if (toStatus === 'Completed') return { type: 'shipment_complete' };
-    return { type: 'none' };
-  }
-
-  if (module === 'Delivery') {
-    if (toStatus === 'Completed') return { type: 'delivery_complete' };
-    return { type: 'none' };
-  }
-
-  if (module === 'Installation') {
-    if (toStatus === 'In Progress' || toStatus === 'Completed') return { type: 'installation_start' };
-    return { type: 'none' };
-  }
-
+// Returns fields to show based on module — always shown regardless of transition
+function getFieldConfig(module) {
+  if (module === 'Orders')       return { type: 'orders' };
+  if (module === 'Shipment')     return { type: 'shipment' };
+  if (module === 'Delivery')     return { type: 'delivery' };
+  if (module === 'Installation') return { type: 'installation' };
   return { type: 'none' };
 }
 
@@ -45,12 +33,12 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   const [targetCol, setTargetCol] = useState('');
   const [remarks,   setRemarks]   = useState('');
 
-  // Shipment complete
+  // Shipment
   const [courier,          setCourier]          = useState('');
   const [trackingNumber,   setTrackingNumber]   = useState('');
   const [expectedDelivery, setExpectedDelivery] = useState('');
 
-  // Delivery complete
+  // Delivery
   const [deliveredTo,  setDeliveredTo]  = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
 
@@ -62,7 +50,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
 
   const fromStatus  = toDisplayStatus(order?.status);
   const updatedAt   = new Date().toISOString();
-  const fieldConfig = targetCol ? getFieldConfig(module, targetCol) : { type: 'none' };
+  const fieldConfig = getFieldConfig(module);
 
   const inp = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -84,7 +72,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     const extraFields = {};
     let notes = '';
 
-    if (fieldConfig.type === 'shipment_complete') {
+    // Shipment — all fields mandatory
+    if (fieldConfig.type === 'shipment') {
       if (!courier.trim())        return setError('Courier is required.');
       if (!trackingNumber.trim()) return setError('Tracking number is required.');
       if (!expectedDelivery)      return setError('Expected delivery date is required.');
@@ -95,7 +84,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
       });
     }
 
-    if (fieldConfig.type === 'delivery_complete') {
+    // Delivery — all fields mandatory
+    if (fieldConfig.type === 'delivery') {
       if (!deliveredTo.trim()) return setError('Delivered To is required.');
       if (!deliveryDate)       return setError('Delivery date is required.');
       Object.assign(extraFields, {
@@ -104,15 +94,17 @@ export default function MoveModal({ order, module, onClose, onMove }) {
       });
     }
 
-    if (fieldConfig.type === 'installation_start') {
-      if (!technicianName.trim()) return setError('Technician name is required.');
-      if (!scheduledDate)         return setError('Scheduled date is required.');
-      Object.assign(extraFields, {
-        technician_name: technicianName,
-        scheduled_date:  scheduledDate,
-      });
+    // Installation — Pending → In Progress mandatory, rest optional
+    if (fieldConfig.type === 'installation') {
+      if (fromStatus === 'Pending' && targetCol === 'In Progress') {
+        if (!technicianName.trim()) return setError('Technician name is required.');
+        if (!scheduledDate)         return setError('Scheduled date is required.');
+      }
+      if (technicianName.trim()) extraFields.technician_name = technicianName;
+      if (scheduledDate)         extraFields.scheduled_date  = scheduledDate;
     }
 
+    // Orders — remarks optional, saved as notes
     if (fieldConfig.type === 'orders' && remarks.trim()) {
       extraFields.metadata = { ...(order?.metadata || {}), remarks: remarks.trim() };
       notes = remarks.trim();
@@ -139,14 +131,14 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         </div>
 
-        {/* Current status badge */}
+        {/* Current status */}
         <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Current:</span>
           <span style={{
             fontSize: 11, fontWeight: 700,
-            color: COL_STYLES[fromStatus]?.text,
-            background: COL_STYLES[fromStatus]?.bg,
-            border: `1px solid ${COL_STYLES[fromStatus]?.border}`,
+            color:       COL_STYLES[fromStatus]?.text,
+            background:  COL_STYLES[fromStatus]?.bg,
+            border:      `1px solid ${COL_STYLES[fromStatus]?.border}`,
             borderRadius: 10, padding: '2px 10px',
           }}>
             {fromStatus}
@@ -155,7 +147,9 @@ export default function MoveModal({ order, module, onClose, onMove }) {
 
         {/* Target column pills */}
         <div style={{ marginBottom: 18 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>Move to *</label>
+          <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>
+            Move to <span style={{ color: '#EF4444' }}>*</span>
+          </label>
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
             {COLUMNS.filter((c) => c !== fromStatus).map((col) => {
               const cs  = COL_STYLES[col];
@@ -167,9 +161,9 @@ export default function MoveModal({ order, module, onClose, onMove }) {
                   style={{
                     fontSize: 12, padding: '5px 13px', borderRadius: 20, cursor: 'pointer',
                     fontWeight: sel ? 700 : 500,
-                    border: `1.5px solid ${sel ? cs.border : '#E2E8F0'}`,
+                    border:     `1.5px solid ${sel ? cs.border : '#E2E8F0'}`,
                     background: sel ? cs.bg : '#F8FAFC',
-                    color: sel ? cs.text : '#64748B',
+                    color:      sel ? cs.text : '#64748B',
                     fontFamily: 'inherit', transition: 'all 0.1s',
                   }}
                 >
@@ -180,16 +174,18 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         </div>
 
-        {/* Updated at */}
+        {/* Updated at — always shown once target selected */}
         {targetCol && (
           <div style={{ marginBottom: 14, background: '#F8FAFC', borderRadius: 8, padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>Updated At</span>
-            <span style={{ fontSize: 11, color: '#475569', fontFamily: "'DM Mono', monospace" }}>{new Date(updatedAt).toLocaleString('en-IN')}</span>
+            <span style={{ fontSize: 11, color: '#475569', fontFamily: "'DM Mono', monospace" }}>
+              {new Date(updatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+            </span>
           </div>
         )}
 
-        {/* Orders */}
-        {fieldConfig.type === 'orders' && (
+        {/* Orders fields */}
+        {fieldConfig.type === 'orders' && targetCol && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
               {label('Order ID')}
@@ -212,8 +208,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Shipment → Completed */}
-        {fieldConfig.type === 'shipment_complete' && (
+        {/* Shipment fields — always mandatory */}
+        {fieldConfig.type === 'shipment' && targetCol && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
               {label('Courier', true)}
@@ -230,8 +226,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Delivery → Completed */}
-        {fieldConfig.type === 'delivery_complete' && (
+        {/* Delivery fields — always mandatory */}
+        {fieldConfig.type === 'delivery' && targetCol && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
               {label('Delivered To', true)}
@@ -244,24 +240,34 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           </div>
         )}
 
-        {/* Installation → In Progress or Completed */}
-        {fieldConfig.type === 'installation_start' && (
+        {/* Installation fields — Pending→InProgress mandatory, rest optional */}
+        {fieldConfig.type === 'installation' && targetCol && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>
-              {label('Technician Name', true)}
-              <input value={technicianName} onChange={(e) => setTechnicianName(e.target.value)} placeholder="e.g. Ravi Kumar" style={inp} />
+              {label('Technician Name', fromStatus === 'Pending' && targetCol === 'In Progress')}
+              <input
+                value={technicianName}
+                onChange={(e) => setTechnicianName(e.target.value)}
+                placeholder="e.g. Ravi Kumar"
+                style={inp}
+              />
             </div>
             <div>
-              {label('Scheduled Date', true)}
-              <input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={inp} />
+              {label('Scheduled Date', fromStatus === 'Pending' && targetCol === 'In Progress')}
+              <input
+                type="date"
+                value={scheduledDate}
+                onChange={(e) => setScheduledDate(e.target.value)}
+                style={inp}
+              />
             </div>
           </div>
         )}
 
-        {/* No extra fields */}
-        {fieldConfig.type === 'none' && targetCol && (
+        {/* AIS140 / Mining — no extra fields for now, API details coming later */}
+        {(module === 'AIS140' || module === 'Mining') && targetCol && (
           <div style={{ marginBottom: 14, fontSize: 12, color: '#94A3B8', background: '#F8FAFC', borderRadius: 8, padding: '10px 12px' }}>
-            No additional information required for this transition.
+            Status will be updated. Additional fields will be available once API is connected.
           </div>
         )}
 
