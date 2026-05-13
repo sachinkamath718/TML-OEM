@@ -339,7 +339,7 @@ export default function App() {
     try {
       const { data: orderData, error: orderErr } = await supabase
         .from('orders')
-        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId() })
+        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId(), created_by: 'system' })
         .select()
         .single();
       if (orderErr) throw orderErr;

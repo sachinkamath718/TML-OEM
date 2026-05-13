@@ -6,23 +6,23 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
   const [hovered, setHovered] = useState(false);
 
   // SE button state (Installation)
-  const [showSimModal,  setShowSimModal]  = useState(false);
-  const [simHovered,    setSimHovered]    = useState(false);
-  const [simData,       setSimData]       = useState(null);
-  const [simLoading,    setSimLoading]    = useState(false);
+  const [showSimModal, setShowSimModal] = useState(false);
+  const [simHovered, setSimHovered] = useState(false);
+  const [simData, setSimData] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
 
   // IMEI button state (AIS140)
   const [showImeiModal, setShowImeiModal] = useState(false);
-  const [imeiHovered,   setImeiHovered]   = useState(false);
-  const [imeiValue,     setImeiValue]     = useState('');
-  const [imeiLoading,   setImeiLoading]   = useState(false);
-  const [imeiSaved,     setImeiSaved]     = useState(false);
+  const [imeiHovered, setImeiHovered] = useState(false);
+  const [imeiValue, setImeiValue] = useState('');
+  const [imeiLoading, setImeiLoading] = useState(false);
+  const [imeiSaved, setImeiSaved] = useState(false);
 
   // Device status button state (AIS140)
-  const [showDevModal,  setShowDevModal]  = useState(false);
-  const [devHovered,    setDevHovered]    = useState(false);
-  const [devData,       setDevData]       = useState(null);
-  const [devLoading,    setDevLoading]    = useState(false);
+  const [showDevModal, setShowDevModal] = useState(false);
+  const [devHovered, setDevHovered] = useState(false);
+  const [devData, setDevData] = useState(null);
+  const [devLoading, setDevLoading] = useState(false);
 
   function handleClick() {
     if (bulkMode) onSelect(order.id);
@@ -70,7 +70,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     setDevData(null);
     try {
       const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
-      const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
+      const res = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
       const json = await res.json();
       if (json.data) {
         setDevData(json.data);
@@ -98,8 +98,8 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         onMouseLeave={() => setHovered(false)}
         onClick={handleClick}
         style={{
-          background:  selected ? '#EFF6FF' : hovered ? '#F8FAFC' : '#fff',
-          border:      `1px solid ${selected ? '#2563EB' : hovered ? '#CBD5E1' : '#E2E8F0'}`,
+          background: selected ? '#EFF6FF' : hovered ? '#F8FAFC' : '#fff',
+          border: `1px solid ${selected ? '#2563EB' : hovered ? '#CBD5E1' : '#E2E8F0'}`,
           borderRadius: 7, padding: '8px 11px', marginBottom: 5,
           cursor: 'pointer', transition: 'all 0.12s ease',
           display: 'flex', alignItems: 'center', gap: 8,
@@ -110,12 +110,12 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         {bulkMode && (
           <div style={{
             width: 15, height: 15, borderRadius: 4, flexShrink: 0,
-            border:      `2px solid ${selected ? '#2563EB' : '#CBD5E1'}`,
-            background:  selected ? '#2563EB' : '#fff',
+            border: `2px solid ${selected ? '#2563EB' : '#CBD5E1'}`,
+            background: selected ? '#2563EB' : '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             transition: 'all 0.12s',
           }}>
-            {selected && <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5"><path d="M2 6l3 3 5-5"/></svg>}
+            {selected && <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5"><path d="M2 6l3 3 5-5" /></svg>}
           </div>
         )}
 
@@ -367,9 +367,9 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                   ) : (
                     [
                       ['Telemetry Last Seen', devData.telemetryLastMessageDateTime],
-                      ['CAN Last Seen',       devData.canLastMessageDateTime],
-                      ['Telemetry Odometer',  devData.telemetryOdometer != null ? `${devData.telemetryOdometer} km` : null],
-                      ['CAN Odometer',        devData.canOdometer       != null ? `${devData.canOdometer} km`       : null],
+                      ['CAN Last Seen', devData.canLastMessageDateTime],
+                      ['Telemetry Odometer', devData.telemetryOdometer != null ? `${devData.telemetryOdometer} km` : null],
+                      ['CAN Odometer', devData.canOdometer != null ? `${devData.canOdometer} km` : null],
                     ].filter(([, v]) => v != null).map(([label, value]) => (
                       <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                         <span style={{ fontSize: 11, color: '#64748B' }}>{label}</span>
