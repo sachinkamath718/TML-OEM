@@ -62,17 +62,26 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     setTimeout(() => { setImeiSaved(false); setShowImeiModal(false); }, 1200);
   }
 
-  // ── Device status: placeholder until API is ready ─────────────────────────
+  // ── Device status: call tml-api proxy → FleetEdge ──────────────────────────
   async function handleCheckDevice(e) {
     e.stopPropagation();
     setShowDevModal(true);
     setDevLoading(true);
-    // TODO: replace with real API call when available
-    // const { data } = await getDeviceStatus(order.vin);
-    setTimeout(() => {
-      setDevData({ status: 'API not connected yet', vin: order.vin });
+    setDevData(null);
+    try {
+      const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
+      const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
+      const json = await res.json();
+      if (json.data) {
+        setDevData(json.data);
+      } else {
+        setDevData({ onlineStatus: 'Error', error: json.err?.message || 'Unknown error' });
+      }
+    } catch (err) {
+      setDevData({ onlineStatus: 'Error', error: 'Network error — ' + err.message });
+    } finally {
       setDevLoading(false);
-    }, 800);
+    }
   }
 
   const btnBase = {
@@ -317,23 +326,59 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={(e) => { e.stopPropagation(); setShowDevModal(false); }}
         >
-          <div style={{ background: '#fff', borderRadius: 12, padding: '24px 28px', width: 380, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}
+          <div style={{ background: '#fff', borderRadius: 12, padding: '24px 28px', width: 400, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginBottom: 4 }}>Device Status</div>
             <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: "'DM Mono', monospace", marginBottom: 16 }}>{order.vin}</div>
 
             {devLoading ? (
-              <div style={{ fontSize: 12, color: '#94A3B8' }}>Fetching device status…</div>
+              <div style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', padding: '16px 0' }}>Fetching device status…</div>
             ) : devData ? (
-              <div style={{ background: '#F8FAFC', borderRadius: 8, padding: '12px 14px' }}>
-                {Object.entries(devData).map(([key, val]) => (
-                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, color: '#64748B', textTransform: 'capitalize' }}>{key.replace(/_/g, ' ')}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>{String(val)}</span>
+              <>
+                {/* Online / Offline badge */}
+                {devData.onlineStatus && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    background: devData.onlineStatus === 'Online' ? '#F0FDF4' : devData.onlineStatus === 'Partial' ? '#FEF3C7' : '#FEF2F2',
+                    border: `1px solid ${devData.onlineStatus === 'Online' ? '#BBF7D0' : devData.onlineStatus === 'Partial' ? '#FDE68A' : '#FECACA'}`,
+                    borderRadius: 8, padding: '10px 14px', marginBottom: 14,
+                  }}>
+                    <div style={{
+                      width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                      background: devData.onlineStatus === 'Online' ? '#22C55E' : devData.onlineStatus === 'Partial' ? '#F59E0B' : '#EF4444',
+                      boxShadow: devData.onlineStatus === 'Online' ? '0 0 0 3px rgba(34,197,94,0.25)' : 'none',
+                    }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: devData.onlineStatus === 'Online' ? '#166534' : devData.onlineStatus === 'Partial' ? '#92400E' : '#991B1B' }}>
+                      {devData.onlineStatus}
+                    </span>
+                    {devData.receivedMessages && devData.receivedMessages.length > 0 && (
+                      <span style={{ fontSize: 10, color: '#64748B', marginLeft: 'auto' }}>
+                        {devData.receivedMessages.join(' · ')}
+                      </span>
+                    )}
                   </div>
-                ))}
-              </div>
+                )}
+
+                {/* Detail rows */}
+                <div style={{ background: '#F8FAFC', borderRadius: 8, padding: '12px 14px' }}>
+                  {devData.error ? (
+                    <div style={{ fontSize: 12, color: '#DC2626' }}>{devData.error}</div>
+                  ) : (
+                    [
+                      ['Telemetry Last Seen', devData.telemetryLastMessageDateTime],
+                      ['CAN Last Seen',       devData.canLastMessageDateTime],
+                      ['Telemetry Odometer',  devData.telemetryOdometer != null ? `${devData.telemetryOdometer} km` : null],
+                      ['CAN Odometer',        devData.canOdometer       != null ? `${devData.canOdometer} km`       : null],
+                    ].filter(([, v]) => v != null).map(([label, value]) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: '#64748B' }}>{label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>{value}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
             ) : (
               <div style={{ fontSize: 12, color: '#94A3B8' }}>No data available.</div>
             )}
