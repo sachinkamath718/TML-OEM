@@ -1,20 +1,47 @@
-import { useState } from 'react';
-
 const COL_STYLES = {
   Pending:       { bg: '#F0F4FF', text: '#3B5BDB', border: '#C5D0FF' },
   'In Progress': { bg: '#FFF8F0', text: '#D9480F', border: '#FFD8A8' },
   Completed:     { bg: '#F0FFF4', text: '#1A7340', border: '#B2F2BB' },
   'On Hold':     { bg: '#FFFDF0', text: '#966A00', border: '#FFE066' },
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9' },
+  Cancelled:     { bg: '#FDF4FF', text: '#86198F', border: '#F0ABFC' },
+  'Cancelled Due To Change Request': { bg: '#FFF1F2', text: '#9F1239', border: '#FECDD3' },
 };
 
-const VALID_TRANSITIONS = {
-  'Pending':     ['In Progress', 'On Hold', 'Failed'],
-  'In Progress': ['Completed',   'On Hold', 'Failed'],
-  'On Hold':     ['Pending',     'In Progress', 'Failed'],
-  'Completed':   [],
-  'Failed':      ['Pending'],
+// Mandatory sequential — Orders, Shipment, Delivery
+const STANDARD_MANDATORY = {
+  'Pending':     ['In Progress'],
+  'In Progress': ['Completed'],
+  'Completed':   ['On Hold'],
+  'On Hold':     ['Failed'],
+  'Failed':      [],
 };
+
+// Installation: Pending→InProgress mandatory, InProgress is free
+const INSTALLATION_TRANSITIONS = {
+  'Pending':     ['In Progress'],
+  'In Progress': ['Completed', 'On Hold', 'Failed'],
+  'Completed':   [],
+  'On Hold':     [],
+  'Failed':      [],
+};
+
+// AIS140 / Mining: free movement across all 6 columns
+const AIS_MINING_ALL = ['Pending', 'In Progress', 'On Hold', 'Cancelled', 'Cancelled Due To Change Request', 'Completed'];
+
+function getValidTargets(module, fromStatus) {
+  if (module === 'Orders' || module === 'Shipment' || module === 'Delivery') {
+    return STANDARD_MANDATORY[fromStatus] || [];
+  }
+  if (module === 'Installation') {
+    return INSTALLATION_TRANSITIONS[fromStatus] || [];
+  }
+  if (module === 'AIS140' || module === 'Mining') {
+    return AIS_MINING_ALL.filter(c => c !== fromStatus);
+  }
+  // Fallback
+  return ['In Progress', 'Completed', 'On Hold', 'Failed'].filter(c => c !== fromStatus);
+}
 
 function toDisplayStatus(status) {
   const map = {
@@ -50,10 +77,11 @@ export default function MoveModal({ order, module, onClose, onMove }) {
 
   const [error, setError] = useState('');
 
-  const fromStatus    = toDisplayStatus(order?.status);
-  const updatedAt     = new Date().toISOString();
-  const fieldConfig   = getFieldConfig(module);
-  const validTargets  = VALID_TRANSITIONS[fromStatus] || [];
+  const fromStatus   = toDisplayStatus(order?.status);
+  const updatedAt    = new Date().toISOString();
+  const fieldConfig  = getFieldConfig(module);
+  const validTargets = getValidTargets(module, fromStatus);
+  const isMandatory  = validTargets.length === 1;
 
   const inp = {
     width: '100%', padding: '8px 12px', borderRadius: 8,
@@ -147,10 +175,19 @@ export default function MoveModal({ order, module, onClose, onMove }) {
           <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 8 }}>
             Move to <span style={{ color: '#EF4444' }}>*</span>
           </label>
+
+          {/* Mandatory step notice */}
+          {isMandatory && (
+            <div style={{ fontSize: 12, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>
+              ⚠️ This is the required next step for {module}. You must complete this stage before moving further.
+            </div>
+          )}
+
           {validTargets.length === 0 ? (
             <div style={{ fontSize: 12, color: '#94A3B8', background: '#F8FAFC', borderRadius: 8, padding: '10px 12px' }}>
               This ticket cannot be moved further.
             </div>
+
           ) : (
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
               {validTargets.map((col) => {

@@ -6,12 +6,16 @@ const COL_STYLES = {
   Completed:     { bg: '#F0FFF4', text: '#1A7340', border: '#B2F2BB', dot: '#2F9E44' },
   'On Hold':     { bg: '#FFFDF0', text: '#966A00', border: '#FFE066', dot: '#E67700' },
   Failed:        { bg: '#FFF0F0', text: '#C92A2A', border: '#FFC9C9', dot: '#E03131' },
+  Cancelled:     { bg: '#FDF4FF', text: '#86198F', border: '#F0ABFC', dot: '#9C36B5' },
+  'Cancelled Due To Change Request': { bg: '#FFF0F3', text: '#9F1239', border: '#FECDD3', dot: '#BE123C' },
 };
 
-export default function KanbanColumn({ col, orders, onMoveClick, onHistoryClick, selectedIds, onToggleSelect, onSelectAll, bulkMode }) {
+export default function KanbanColumn({ col, orders, onMoveClick, onHistoryClick, selectedIds, onToggleSelect, onSelectAll, bulkMode, module }) {
   const cs          = COL_STYLES[col] || COL_STYLES['Pending'];
   const allSelected = orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
   const someSelected = !allSelected && orders.some((o) => selectedIds.has(o.id));
+  // Abbreviate very long column names
+  const colLabel = col === 'Cancelled Due To Change Request' ? 'CDTCR' : col.toUpperCase();
 
   return (
     <div style={{ flex: 1, minWidth: 195, maxWidth: 260 }}>
@@ -26,7 +30,12 @@ export default function KanbanColumn({ col, orders, onMoveClick, onHistoryClick,
               {someSelected && !allSelected && <div style={{ width: 6, height: 2, background: '#2563EB', borderRadius: 1 }} />}
             </div>
           )}
-          <span style={{ fontSize: 11, fontWeight: 700, color: cs.text, letterSpacing: 0.5 }}>{col.toUpperCase()}</span>
+          <span
+            style={{ fontSize: 11, fontWeight: 700, color: cs.text, letterSpacing: 0.3 }}
+            title={col}
+          >
+            {colLabel}
+          </span>
         </div>
         <span style={{ fontSize: 11, fontWeight: 700, color: cs.text, background: '#fff', borderRadius: 10, padding: '1px 8px', border: `1px solid ${cs.border}` }}>
           {orders.length}
@@ -38,6 +47,7 @@ export default function KanbanColumn({ col, orders, onMoveClick, onHistoryClick,
           <TicketCard
             key={order.id}
             order={order}
+            module={module}
             onMoveClick={onMoveClick}
             onHistoryClick={onHistoryClick}
             selected={selectedIds.has(order.id)}

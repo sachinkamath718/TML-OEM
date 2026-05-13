@@ -149,8 +149,8 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
               </div>
             )}
 
-            {/* AIS140: IMEI + Device Status buttons */}
-            {module === 'AIS140' && (
+            {/* AIS140 + Mining: IMEI + Device Status buttons */}
+            {(module === 'AIS140' || module === 'Mining') && (
               <>
                 <div style={{ position: 'relative' }}
                   onMouseEnter={() => setImeiHovered(true)}

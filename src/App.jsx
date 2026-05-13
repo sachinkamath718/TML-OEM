@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { COLUMNS, MODULES } from './constants';
+import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
+
 import { generateId } from './utils';
 
 import Sidebar from './components/Sidebar';
@@ -459,21 +460,27 @@ export default function App() {
 
         {/* Kanban board */}
         <div style={{ flex: 1, overflowX: 'auto', padding: '20px 24px' }}>
-          <div style={{ display: 'flex', gap: 14, minWidth: 900 }}>
-            {COLUMNS.map((col) => (
-              <KanbanColumn
-                key={col}
-                col={col}
-                orders={filteredTickets.filter((t) => t.status === col)}
-                onMoveClick={setMoveTarget}
-                onHistoryClick={setDetailOrder}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleSelect}
-                onSelectAll={selectAll}
-                bulkMode={bulkMode}
-              />
-            ))}
-          </div>
+          {(() => {
+            const activeCols = AIS_MINING_MODULES.includes(activeModule) ? AIS_MINING_COLUMNS : COLUMNS;
+            return (
+              <div style={{ display: 'flex', gap: 14, minWidth: activeCols.length * 210 }}>
+                {activeCols.map((col) => (
+                  <KanbanColumn
+                    key={col}
+                    col={col}
+                    orders={filteredTickets.filter((t) => t.status === col)}
+                    onMoveClick={setMoveTarget}
+                    onHistoryClick={setDetailOrder}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onSelectAll={selectAll}
+                    bulkMode={bulkMode}
+                    module={activeModule}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
