@@ -3,6 +3,9 @@ import { supabase } from '../supabaseClient';
 import { formatDate } from '../utils';
 
 export default function TicketCard({ order, module, onMoveClick, onHistoryClick, selected, onSelect, bulkMode }) {
+  // Use order._module as the primary source of truth (set by normalizeTicket).
+  // Falls back to the `module` prop as a safety net.
+  const mod = order._module || module;
   const [hovered, setHovered] = useState(false);
 
   // SE button state (Installation)
@@ -134,7 +137,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
           <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
 
             {/* Installation: SE button */}
-            {module === 'Installation' && (
+            {mod === 'Installation' && (
               <div style={{ position: 'relative' }}
                 onMouseEnter={() => setSimHovered(true)}
                 onMouseLeave={() => setSimHovered(false)}
@@ -159,7 +162,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
             )}
 
             {/* AIS140 + Mining: IMEI + Device Status buttons */}
-            {(module === 'AIS140' || module === 'Mining') && (
+            {(mod === 'AIS140' || mod === 'Mining') && (
               <>
                 <div style={{ position: 'relative' }}
                   onMouseEnter={() => setImeiHovered(true)}
