@@ -32,30 +32,38 @@ const MODULE_STAGE = {
 
 function normalizeTicket(ticket, module) {
   const statusMap = {
-    pending:     'Pending',
-    in_progress: 'In Progress',
-    completed:   'Completed',
-    on_hold:     'On Hold',
-    failed:      'Failed',
+    pending:                           'Pending',
+    in_progress:                       'In Progress',
+    completed:                         'Completed',
+    on_hold:                           'On Hold',
+    failed:                            'Failed',
+    // AIS140 / Mining specific
+    cancelled:                         'Cancelled',
+    cancelled_due_to_change_request:   'Cancelled Due To Change Request',
+    // Also handle if DB sends display strings directly
+    'Cancelled':                       'Cancelled',
+    'Cancelled Due To Change Request': 'Cancelled Due To Change Request',
   };
   return {
     ...ticket,
     _module:    module,
     _table:     MODULE_TABLE[module],
-    status:     statusMap[ticket.status] || 'Pending',
+    status:     statusMap[ticket.status] || ticket.status || 'Pending',
     _rawStatus: ticket.status,
   };
 }
 
 function displayToRaw(display) {
   const map = {
-    'Pending':     'pending',
-    'In Progress': 'in_progress',
-    'Completed':   'completed',
-    'On Hold':     'on_hold',
-    'Failed':      'failed',
+    'Pending':                           'pending',
+    'In Progress':                       'in_progress',
+    'Completed':                         'completed',
+    'On Hold':                           'on_hold',
+    'Failed':                            'failed',
+    'Cancelled':                         'cancelled',
+    'Cancelled Due To Change Request':   'cancelled_due_to_change_request',
   };
-  return map[display] || 'pending';
+  return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
 export default function App() {
