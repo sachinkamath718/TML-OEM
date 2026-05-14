@@ -222,7 +222,11 @@ export default function App() {
   }, [fetchModule]);
 
   // ─── Active tickets ───────────────────────────────────────────────────────
-  const tickets = allTickets[activeModule] || [];
+  // Deduplicate tickets by a composite key to prevent duplicates while allowing flattened vehicles
+  const rawTickets = allTickets[activeModule] || [];
+  const tickets = Array.from(
+    new Map(rawTickets.map((t) => [`${t.id}-${t.vin || ''}`, t])).values()
+  );
 
   const filteredTickets = tickets.filter((t) => {
     if (!search.trim()) return true;
