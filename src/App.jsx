@@ -170,17 +170,29 @@ export default function App() {
             });
             return;
           }
+
           setAllTickets((prev) => {
             const current = prev[module] || [];
             if (payload.eventType === 'INSERT') {
+              const exists = current.some((t) => t.id === payload.new.id);
+              if (exists) return prev;
               return { ...prev, [module]: [normalizeTicket(payload.new, module), ...current] };
             } else if (payload.eventType === 'UPDATE') {
-              return { ...prev, [module]: current.map((t) => t.id === payload.new.id ? normalizeTicket(payload.new, module) : t) };
+              return {
+                ...prev,
+                [module]: current.map((t) =>
+                  t.id === payload.new.id ? normalizeTicket(payload.new, module) : t
+                ),
+              };
             } else if (payload.eventType === 'DELETE') {
-              return { ...prev, [module]: current.filter((t) => t.id !== payload.old.id) };
+              return {
+                ...prev,
+                [module]: current.filter((t) => t.id !== payload.old.id),
+              };
             }
             return prev;
           });
+
           if (payload.eventType === 'UPDATE') {
             setDetailOrder((prev) =>
               prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
@@ -189,7 +201,9 @@ export default function App() {
         })
         .subscribe();
     });
-    return () => { channels.forEach((c) => supabase.removeChannel(c)); };
+    return () => {
+      channels.forEach((c) => supabase.removeChannel(c));
+    };
   }, [fetchModule]);
 
   // ─── Active tickets ───────────────────────────────────────────────────────
@@ -482,10 +496,6 @@ export default function App() {
         notes:       'Order created',
       });
 
-      for (const mod of MODULES) {
-        const fresh = await fetchModule(mod);
-        setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
-      }
       setShowNewOrder(false);
     } catch (err) {
       alert('Failed to create order: ' + err.message);
@@ -626,12 +636,7 @@ export default function App() {
       {showNewOrder && (
         <NewOrderModal
           onClose={() => setShowNewOrder(false)}
-          onCreated={async () => {
-            for (const mod of MODULES) {
-              const fresh = await fetchModule(mod);
-              setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
-            }
-          }}
+          onCreated={() => setShowNewOrder(false)}
         />
       )}
     </div>
