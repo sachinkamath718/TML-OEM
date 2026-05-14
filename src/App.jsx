@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-// Build Version: 2026.05.14.3 - Force Redeploy
+import { useState, useEffect, useCallback, useRef } from 'react';
+// Build Version: 2026.05.14.4 - Fix Duplicate Tickets
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -82,6 +82,9 @@ export default function App() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
 
+  // ─── FIX: Guard ref — prevents realtime INSERT events firing during initial fetch ───
+  const initialLoadDone = useRef(false);
+
   // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
     // Orders: join order_vehicles to get VINs and vehicle details
@@ -135,6 +138,9 @@ export default function App() {
     async function init() {
       setLoading(true);
       setError(null);
+      // FIX: Reset the guard on each init
+      initialLoadDone.current = false;
+
       try {
         const first = await fetchModule(activeModule);
         setAllTickets((prev) => ({ ...prev, [activeModule]: first }));
@@ -153,6 +159,9 @@ export default function App() {
         setError('Failed to load: ' + err.message);
         setLoading(false);
       }
+
+      // FIX: Only allow realtime INSERTs after all initial data is loaded
+      initialLoadDone.current = true;
     }
     init();
   }, []); // eslint-disable-line
@@ -165,10 +174,13 @@ export default function App() {
       MODULES.forEach((module) => {
         const table = MODULE_TABLE[module];
         const channel = supabase
-          .channel(`${table}-rt-${module}`) // Unique channel name per module
+          .channel(`${table}-rt-${module}`)
           .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
             // For Orders module, re-fetch to get joined vehicle data (flattened)
             if (module === 'Orders') {
+              // FIX: Skip INSERT events that fire during initial load
+              if (payload.eventType === 'INSERT' && !initialLoadDone.current) return;
+
               fetchModule('Orders').then((rows) => {
                 setAllTickets((prev) => ({ ...prev, Orders: rows }));
               });
@@ -177,21 +189,25 @@ export default function App() {
 
             setAllTickets((prev) => {
               const current = prev[module] || [];
+
               if (payload.eventType === 'INSERT') {
+                // FIX: Ignore INSERT events that fire during initial fetch
+                if (!initialLoadDone.current) return prev;
+
                 const newTicket = normalizeTicket(payload.new, module);
                 // Deduplicate: check if ID already exists
                 if (current.some((t) => t.id === newTicket.id)) return prev;
                 return { ...prev, [module]: [newTicket, ...current] };
-              } 
-              
+              }
+
               if (payload.eventType === 'UPDATE') {
                 const updatedTicket = normalizeTicket(payload.new, module);
                 return {
                   ...prev,
                   [module]: current.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)),
                 };
-              } 
-              
+              }
+
               if (payload.eventType === 'DELETE') {
                 return {
                   ...prev,
@@ -208,7 +224,7 @@ export default function App() {
             }
           })
           .subscribe();
-        
+
         activeChannels.push(channel);
       });
     };
@@ -223,10 +239,18 @@ export default function App() {
   }, [fetchModule]);
 
   // ─── Active tickets ───────────────────────────────────────────────────────
-  // Deduplicate tickets by a composite key to prevent duplicates while allowing flattened vehicles
   const rawTickets = allTickets[activeModule] || [];
+
+  // FIX: Proper dedup key — Orders uses id+vin (flattened vehicles), all others use id only
   const tickets = Array.from(
-    new Map(rawTickets.map((t) => [`${t.id}-${t.vin || ''}`, t])).values()
+    new Map(
+      rawTickets.map((t) => [
+        activeModule === 'Orders'
+          ? `${t.id}-${t.vin || t.tracking_id || ''}`
+          : t.id,
+        t,
+      ])
+    ).values()
   );
 
   const filteredTickets = tickets.filter((t) => {
@@ -259,7 +283,6 @@ export default function App() {
 
   // ─── Write history row ────────────────────────────────────────────────────
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
-    // For Orders module the ticket IS the order, so use ticket.id as order_id
     const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
 
     if (!orderId) {
@@ -289,7 +312,7 @@ export default function App() {
       cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST',
     };
     const statusStr = STATUS_MAP[rawStatus];
-    if (!statusStr) return; // don't fire for pending
+    if (!statusStr) return;
 
     try {
       if (activeModule === 'AIS140') {
@@ -382,7 +405,6 @@ export default function App() {
         console.log(`[outbound] TCU_DELIVERED webhook fired: ${ticket.tracking_id}`);
       }
     } catch (webhookErr) {
-      // Non-blocking — log but don't fail the move
       console.warn('[outbound] Webhook fire failed (non-blocking):', webhookErr.message);
     }
   }
@@ -409,10 +431,8 @@ export default function App() {
       if (updateErr) throw updateErr;
 
       await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
-      // Fire outbound webhook to TML (non-blocking)
       fireOutboundWebhook(ticket, rawStatus, safeExtra);
 
-      // For Orders, re-fetch to keep VIN join in sync
       if (activeModule === 'Orders') {
         const fresh = await fetchModule('Orders');
         setAllTickets((prev) => ({ ...prev, Orders: fresh }));
@@ -477,7 +497,7 @@ export default function App() {
     }
   }
 
-  // ─── Create order (simple VIN-only flow) ─────────────────────────────────
+  // ─── Create order ─────────────────────────────────────────────────────────
   async function handleCreate(orderPayload, vehicleRows, spocRow) {
     try {
       const { data: orderData, error: orderErr } = await supabase
