@@ -352,26 +352,43 @@ export default function App() {
     }
   }
 
+  // ─── Per-module allowlist of actual DB columns (beyond `status`) ──────────
+  // Only these keys from extraFields are written to the database.
+  // Everything else is webhook-only and must NOT be sent to Supabase.
+  const MODULE_DB_FIELDS = {
+    Orders:       [],
+    Shipment:     ['courier', 'awb_number', 'expected_delivery', 'icc_id'],
+    Delivery:     ['delivered_to', 'delivered_at'],
+    Installation: ['technician_name', 'scheduled_date', 'installation_date'],
+    AIS140:       ['handler', 'handler_contact', 'remark'],
+    Mining:       ['handler', 'handler_contact', 'remark'],
+  };
+
   // ─── Single move ──────────────────────────────────────────────────────────
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
     const ticket = tickets.find((t) => t.id === moveTarget.id);
     if (!ticket) return;
 
-    const rawStatus  = displayToRaw(targetCol);
-    const safeExtra  = { ...extraFields };
-    delete safeExtra.changed_by;
-    delete safeExtra.notes;
+    const rawStatus    = displayToRaw(targetCol);
+    const allowedCols  = MODULE_DB_FIELDS[activeModule] || [];
+
+    // dbFields: only keys that actually exist as columns in this module's table
+    const dbFields     = Object.fromEntries(
+      Object.entries(extraFields).filter(([k]) => allowedCols.includes(k))
+    );
+    // webhookFields: full extraFields passed to the webhook (not written to DB)
+    const webhookFields = { ...extraFields };
 
     try {
       const { error: updateErr } = await supabase
         .from(ticket._table)
-        .update({ status: rawStatus, ...safeExtra })
+        .update({ status: rawStatus, ...dbFields })
         .eq('id', ticket.id);
       if (updateErr) throw updateErr;
 
       await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
-      fireOutboundWebhook(ticket, rawStatus, safeExtra);
+      fireOutboundWebhook(ticket, rawStatus, webhookFields);
 
       // Always full-replace after write
       const fresh = await fetchModule(activeModule);
