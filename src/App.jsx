@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.14.5 - Fix Tab Switch Duplicates
+// Build Version: 2026.05.14.6 - Strict No-Duplicate Architecture
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -38,10 +38,8 @@ function normalizeTicket(ticket, module) {
     completed:                         'Completed',
     on_hold:                           'On Hold',
     failed:                            'Failed',
-    // AIS140 / Mining specific
     cancelled:                         'Cancelled',
     cancelled_due_to_change_request:   'Cancelled Due To Change Request',
-    // Also handle if DB sends display strings directly
     'Cancelled':                       'Cancelled',
     'Cancelled Due To Change Request': 'Cancelled Due To Change Request',
   };
@@ -67,11 +65,26 @@ function displayToRaw(display) {
   return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
+// ─── Strict dedup: returns a new array with duplicates removed ──────────────
+// Orders: dedup key is id+vin (because one order row is flattened per vehicle)
+// All others: dedup key is id only
+function dedupTickets(tickets, module) {
+  const seen = new Map();
+  for (const t of tickets) {
+    const key = module === 'Orders'
+      ? `${t.id}-${t.vin || t.tracking_id || ''}`
+      : String(t.id);
+    if (!seen.has(key)) seen.set(key, t);
+  }
+  return Array.from(seen.values());
+}
+
 export default function App() {
-  const [allTickets, setAllTickets]     = useState({});
-  const [loadedMods, setLoadedMods]     = useState({});
+  // Single source of truth: Map<module, ticket[]> — always fully replaced, never merged/appended
+  const [ticketMap, setTicketMap]       = useState({});
   const [activeModule, setActiveModule] = useState('Orders');
   const [loading, setLoading]           = useState(true);
+  const [switchLoading, setSwitchLoading] = useState(false);
   const [error, setError]               = useState(null);
 
   const [moveTarget, setMoveTarget]     = useState(null);
@@ -81,14 +94,15 @@ export default function App() {
   const [showBulkMove, setShowBulkMove] = useState(false);
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
-  const [switchLoading, setSwitchLoading] = useState(false);
 
-  // ─── FIX: Guard ref — prevents realtime INSERT events firing during initial fetch ───
-  const initialLoadDone = useRef(false);
+  // Tracks which module is actively being fetched — realtime ignores stale fetches
+  const fetchingModule = useRef(null);
+  // Tracks the current active module for realtime handler closures
+  const activeModuleRef = useRef(activeModule);
+  useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
 
   // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
-    // Orders: join order_vehicles to get VINs and vehicle details
     if (module === 'Orders') {
       const { data, error } = await supabase
         .from('orders')
@@ -121,156 +135,130 @@ export default function App() {
           }
         }
       }
-      return rows;
+      // Dedup before returning — DB join can produce dupes if called in rapid succession
+      return dedupTickets(rows, 'Orders');
     }
 
-    // All other modules
     const table = MODULE_TABLE[module];
     const { data, error } = await supabase
       .from(table)
       .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return (data || []).map((t) => normalizeTicket(t, module));
+    return dedupTickets((data || []).map((t) => normalizeTicket(t, module)), module);
   }, []);
 
-  // ─── Switch module — always re-fetch fresh to avoid stale/duplicated state ──
+  // ─── Load a module and replace its slice entirely ─────────────────────────
+  const loadModule = useCallback(async (module) => {
+    const rows = await fetchModule(module);
+    // Always REPLACE — never spread-merge — to prevent accumulation
+    setTicketMap((prev) => ({ ...prev, [module]: rows }));
+    return rows;
+  }, [fetchModule]);
+
+  // ─── Initial load: only load active module, nothing else ──────────────────
+  useEffect(() => {
+    async function init() {
+      setLoading(true);
+      setError(null);
+      try {
+        await loadModule(activeModule);
+      } catch (err) {
+        setError('Failed to load: ' + err.message);
+      }
+      setLoading(false);
+    }
+    init();
+  }, []); // eslint-disable-line
+
+  // ─── Realtime: only subscribe to active module, always full-replace ────────
+  useEffect(() => {
+    let channel = null;
+    let isCurrent = true; // guards against stale closures after cleanup
+
+    const module = activeModule;
+    const table  = MODULE_TABLE[module];
+
+    channel = supabase
+      .channel(`rt-${module}-${Date.now()}`) // unique channel name prevents ghost subscriptions
+      .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+        if (!isCurrent) return;
+        if (activeModuleRef.current !== module) return;
+
+        if (module === 'Orders') {
+          // For Orders, always do a full DB re-fetch (flattened join rows can't be built from payload alone)
+          fetchModule('Orders').then((rows) => {
+            if (!isCurrent) return;
+            // Full replace — no merging
+            setTicketMap((prev) => ({ ...prev, Orders: rows }));
+          });
+          return;
+        }
+
+        setTicketMap((prev) => {
+          const current = prev[module] || [];
+
+          if (payload.eventType === 'INSERT') {
+            const newTicket = normalizeTicket(payload.new, module);
+            // Skip if already present (guard against duplicate realtime events)
+            if (current.some((t) => String(t.id) === String(newTicket.id))) return prev;
+            return { ...prev, [module]: [newTicket, ...current] };
+          }
+
+          if (payload.eventType === 'UPDATE') {
+            const updated = normalizeTicket(payload.new, module);
+            const exists  = current.some((t) => String(t.id) === String(updated.id));
+            const next    = exists
+              ? current.map((t) => (String(t.id) === String(updated.id) ? updated : t))
+              : current; // don't add if not present — avoids phantom rows
+            return { ...prev, [module]: next };
+          }
+
+          if (payload.eventType === 'DELETE') {
+            return {
+              ...prev,
+              [module]: current.filter((t) => String(t.id) !== String(payload.old.id)),
+            };
+          }
+
+          return prev;
+        });
+
+        if (payload.eventType === 'UPDATE') {
+          setDetailOrder((prev) =>
+            prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
+          );
+        }
+      })
+      .subscribe();
+
+    return () => {
+      isCurrent = false;
+      supabase.removeChannel(channel);
+    };
+  }, [activeModule, fetchModule]); // re-subscribes on every module switch
+
+  // ─── Switch module: full fresh fetch, full replace ────────────────────────
   const handleModuleSwitch = useCallback(async (mod) => {
     if (mod === activeModule) return;
-    // Reset bulk/search state inline (exitBulkMode defined below, but these are just setters)
+
     setSelectedIds(new Set());
     setBulkMode(false);
     setSearch('');
     setActiveModule(mod);
     setSwitchLoading(true);
+
     try {
-      const fresh = await fetchModule(mod);
-      // Replace (not merge) the module's tickets entirely with fresh data
-      setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
-      setLoadedMods((prev) => ({ ...prev, [mod]: true }));
+      await loadModule(mod);
     } catch (_) {}
+
     setSwitchLoading(false);
-  }, [activeModule, fetchModule]);
+  }, [activeModule, loadModule]);
 
-  // ─── Initial load ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    async function init() {
-      setLoading(true);
-      setError(null);
-      // FIX: Reset the guard on each init
-      initialLoadDone.current = false;
-
-      try {
-        const first = await fetchModule(activeModule);
-        setAllTickets((prev) => ({ ...prev, [activeModule]: first }));
-        setLoadedMods((prev) => ({ ...prev, [activeModule]: true }));
-        setLoading(false);
-
-        const rest = MODULES.filter((m) => m !== activeModule);
-        for (const mod of rest) {
-          try {
-            const tickets = await fetchModule(mod);
-            setAllTickets((prev) => ({ ...prev, [mod]: tickets }));
-            setLoadedMods((prev) => ({ ...prev, [mod]: true }));
-          } catch (_) {}
-        }
-      } catch (err) {
-        setError('Failed to load: ' + err.message);
-        setLoading(false);
-      }
-
-      // FIX: Only allow realtime INSERTs after all initial data is loaded
-      initialLoadDone.current = true;
-    }
-    init();
-  }, []); // eslint-disable-line
-
-  // ─── Realtime ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const activeChannels = [];
-
-    const setupRealtime = () => {
-      MODULES.forEach((module) => {
-        const table = MODULE_TABLE[module];
-        const channel = supabase
-          .channel(`${table}-rt-${module}`)
-          .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-            // For Orders module, re-fetch to get joined vehicle data (flattened)
-            if (module === 'Orders') {
-              // FIX: Skip INSERT events that fire during initial load
-              if (payload.eventType === 'INSERT' && !initialLoadDone.current) return;
-
-              fetchModule('Orders').then((rows) => {
-                setAllTickets((prev) => ({ ...prev, Orders: rows }));
-              });
-              return;
-            }
-
-            setAllTickets((prev) => {
-              const current = prev[module] || [];
-
-              if (payload.eventType === 'INSERT') {
-                // FIX: Ignore INSERT events that fire during initial fetch
-                if (!initialLoadDone.current) return prev;
-
-                const newTicket = normalizeTicket(payload.new, module);
-                // Deduplicate: check if ID already exists
-                if (current.some((t) => t.id === newTicket.id)) return prev;
-                return { ...prev, [module]: [newTicket, ...current] };
-              }
-
-              if (payload.eventType === 'UPDATE') {
-                const updatedTicket = normalizeTicket(payload.new, module);
-                return {
-                  ...prev,
-                  [module]: current.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)),
-                };
-              }
-
-              if (payload.eventType === 'DELETE') {
-                return {
-                  ...prev,
-                  [module]: current.filter((t) => t.id !== payload.old.id),
-                };
-              }
-              return prev;
-            });
-
-            if (payload.eventType === 'UPDATE') {
-              setDetailOrder((prev) =>
-                prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
-              );
-            }
-          })
-          .subscribe();
-
-        activeChannels.push(channel);
-      });
-    };
-
-    setupRealtime();
-
-    return () => {
-      activeChannels.forEach((channel) => {
-        supabase.removeChannel(channel);
-      });
-    };
-  }, [fetchModule]);
-
-  // ─── Active tickets ───────────────────────────────────────────────────────
-  const rawTickets = allTickets[activeModule] || [];
-
-  // FIX: Proper dedup key — Orders uses id+vin (flattened vehicles), all others use id only
-  const tickets = Array.from(
-    new Map(
-      rawTickets.map((t) => [
-        activeModule === 'Orders'
-          ? `${t.id}-${t.vin || t.tracking_id || ''}`
-          : t.id,
-        t,
-      ])
-    ).values()
-  );
+  // ─── Active tickets (always from the replaced slice) ──────────────────────
+  const rawTickets     = ticketMap[activeModule] || [];
+  // One final dedup pass as a safety net
+  const tickets        = dedupTickets(rawTickets, activeModule);
 
   const filteredTickets = tickets.filter((t) => {
     if (!search.trim()) return true;
@@ -303,12 +291,7 @@ export default function App() {
   // ─── Write history row ────────────────────────────────────────────────────
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
     const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
-
-    if (!orderId) {
-      console.warn('No order_id found for history write, skipping.');
-      return;
-    }
-
+    if (!orderId) { console.warn('No order_id found for history write, skipping.'); return; }
     const { error } = await supabase.from('order_status_history').insert({
       order_id:    orderId,
       vin:         ticket.vin       || null,
@@ -324,7 +307,7 @@ export default function App() {
 
   // ─── Fire outbound webhook to TML ─────────────────────────────────────────
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
-    const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
+    const apiBase   = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
     const STATUS_MAP = {
       in_progress: 'IN_PROGRESS', completed: 'COMPLETED',
       on_hold: 'ON_HOLD', cancelled: 'CANCELLED',
@@ -336,92 +319,33 @@ export default function App() {
     try {
       if (activeModule === 'AIS140') {
         await fetch(`${apiBase}/webhooks/v2/ais140-requests`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            vin:       ticket.vin,
-            ticketNo:  ticket.ticket_no,
-            status:    statusStr,
-            remark:    extraFields.remark || '',
-            handler:   extraFields.handler || '',
-            handlerContact: extraFields.handler_contact || '',
-            updatedAt: new Date().toISOString(),
-            metadata:  {},
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString(), metadata: {} }),
         });
-        console.log(`[outbound] AIS140 webhook fired: ${ticket.ticket_no} → ${statusStr}`);
       }
-
       if (activeModule === 'Mining') {
         await fetch(`${apiBase}/webhooks/mining-requests`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            vin:       ticket.vin,
-            ticketNo:  ticket.mining_ticket_no || ticket.ticket_no,
-            status:    statusStr,
-            remark:    extraFields.remark || '',
-            handler:   extraFields.handler || '',
-            handlerContact: extraFields.handler_contact || '',
-            updatedAt: new Date().toISOString(),
-            metadata:  {},
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString(), metadata: {} }),
         });
-        console.log(`[outbound] Mining webhook fired: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
-
       if (activeModule === 'Installation' && rawStatus === 'completed') {
         await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'DEVICE_INSTALLED',
-            updatedAt:  new Date().toISOString(),
-            meta: {
-              technicianName:  extraFields.technician_name || '',
-              installationDate: extraFields.scheduled_date || '',
-              remarks:         extraFields.remark || 'Marked completed from Kanban',
-            },
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), meta: { technicianName: extraFields.technician_name || '', installationDate: extraFields.scheduled_date || '', remarks: extraFields.remark || 'Marked completed from Kanban' } }),
         });
-        console.log(`[outbound] DEVICE_INSTALLED webhook fired: ${ticket.tracking_id}`);
       }
-
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
         await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'TCU_SHIPPED',
-            updatedAt:  new Date().toISOString(),
-            meta: {
-              iccId:                 extraFields.iccid || '',
-              courier:               extraFields.courier || '',
-              courierTrackingNumber: extraFields.awb_number || '',
-              expectedDelivery:      extraFields.expected_delivery || '',
-            },
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), meta: { iccId: extraFields.iccid || '', courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '', expectedDelivery: extraFields.expected_delivery || '' } }),
         });
-        console.log(`[outbound] TCU_SHIPPED webhook fired: ${ticket.tracking_id}`);
       }
-
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
         await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'TCU_DELIVERED',
-            updatedAt:  new Date().toISOString(),
-            meta: { remarks: `Delivered to ${extraFields.delivered_to || ''}` },
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), meta: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } }),
         });
-        console.log(`[outbound] TCU_DELIVERED webhook fired: ${ticket.tracking_id}`);
       }
     } catch (webhookErr) {
       console.warn('[outbound] Webhook fire failed (non-blocking):', webhookErr.message);
@@ -434,47 +358,30 @@ export default function App() {
     const ticket = tickets.find((t) => t.id === moveTarget.id);
     if (!ticket) return;
 
-    const rawStatus = displayToRaw(targetCol);
-
-    const safeExtra = { ...extraFields };
+    const rawStatus  = displayToRaw(targetCol);
+    const safeExtra  = { ...extraFields };
     delete safeExtra.changed_by;
     delete safeExtra.notes;
 
     try {
-      const updatePayload = { status: rawStatus, ...safeExtra };
-
       const { error: updateErr } = await supabase
         .from(ticket._table)
-        .update(updatePayload)
+        .update({ status: rawStatus, ...safeExtra })
         .eq('id', ticket.id);
       if (updateErr) throw updateErr;
 
       await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
       fireOutboundWebhook(ticket, rawStatus, safeExtra);
 
-      if (activeModule === 'Orders') {
-        const fresh = await fetchModule('Orders');
-        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
-        setDetailOrder((prev) => {
-          if (!prev || prev.id !== ticket.id) return prev;
-          const updated = fresh.find((t) => t.id === ticket.id);
-          return updated || { ...prev, status: targetCol, _rawStatus: rawStatus };
-        });
-      } else {
-        setAllTickets((prev) => ({
-          ...prev,
-          [activeModule]: (prev[activeModule] || []).map((t) =>
-            t.id === ticket.id
-              ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-              : t
-          ),
-        }));
-        setDetailOrder((prev) =>
-          prev?.id === ticket.id
-            ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-            : prev
-        );
-      }
+      // Always full-replace after write
+      const fresh = await fetchModule(activeModule);
+      setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
+
+      setDetailOrder((prev) => {
+        if (!prev || prev.id !== ticket.id) return prev;
+        const updated = fresh.find((t) => t.id === ticket.id);
+        return updated || { ...prev, status: targetCol, _rawStatus: rawStatus };
+      });
     } catch (err) {
       alert('Failed to update: ' + err.message);
     }
@@ -498,17 +405,10 @@ export default function App() {
         await writeHistory(ticket, ticket._rawStatus, rawStatus);
       }));
 
-      if (activeModule === 'Orders') {
-        const fresh = await fetchModule('Orders');
-        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
-      } else {
-        setAllTickets((prev) => ({
-          ...prev,
-          [activeModule]: (prev[activeModule] || []).map((t) =>
-            selectedIds.has(t.id) ? { ...t, status: targetCol, _rawStatus: rawStatus } : t
-          ),
-        }));
-      }
+      // Full-replace after all writes
+      const fresh = await fetchModule(activeModule);
+      setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
+
       exitBulkMode();
       setShowBulkMove(false);
     } catch (err) {
@@ -517,7 +417,7 @@ export default function App() {
   }
 
   // ─── Create order ─────────────────────────────────────────────────────────
-  async function handleCreate(orderPayload, vehicleRows, spocRow) {
+  async function handleCreate(orderPayload, vehicleRows) {
     try {
       const { data: orderData, error: orderErr } = await supabase
         .from('orders')
@@ -528,15 +428,7 @@ export default function App() {
 
       for (const v of vehicleRows) {
         const trackingId = 'TRK-' + generateId();
-
-        await supabase.from('order_vehicles').insert({
-          order_id:    orderData.id,
-          vin:         v.vin,
-          ticket_id:   'TKT-' + generateId(),
-          tracking_id: trackingId,
-          status:      'pending',
-        });
-
+        await supabase.from('order_vehicles').insert({ order_id: orderData.id, vin: v.vin, ticket_id: 'TKT-' + generateId(), tracking_id: trackingId, status: 'pending' });
         const base = { vin: v.vin, tracking_id: trackingId, order_id: orderData.id, status: 'pending' };
         await supabase.from('shipment_tickets').insert({ ...base, ticket_no: 'SHP-' + generateId() });
         await supabase.from('delivery_tickets').insert({ ...base, ticket_no: 'DLV-' + generateId() });
@@ -545,16 +437,7 @@ export default function App() {
         await supabase.from('mining_tickets').insert({ ...base, mining_ticket_no: 'MIN-' + generateId() });
       }
 
-      await supabase.from('order_status_history').insert({
-        order_id:    orderData.id,
-        vin:         null,
-        stage:       'order',
-        from_status: null,
-        to_status:   'pending',
-        changed_by:  null,
-        notes:       'Order created',
-      });
-
+      await supabase.from('order_status_history').insert({ order_id: orderData.id, vin: null, stage: 'order', from_status: null, to_status: 'pending', changed_by: null, notes: 'Order created' });
       setShowNewOrder(false);
     } catch (err) {
       alert('Failed to create order: ' + err.message);
@@ -597,7 +480,7 @@ export default function App() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
             <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
               {tickets.length} total · {inProgressCount} in progress
-              {(switchLoading || !loadedMods[activeModule]) && (
+              {switchLoading && (
                 <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>
               )}
             </div>
