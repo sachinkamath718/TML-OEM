@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+// Build Version: 2026.05.14.3 - Force Redeploy
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
