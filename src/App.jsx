@@ -158,51 +158,66 @@ export default function App() {
 
   // ─── Realtime ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const channels = MODULES.map((module) => {
-      const table = MODULE_TABLE[module];
-      return supabase
-        .channel(`${table}-rt`)
-        .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-          // For Orders module, re-fetch to get joined vehicle data
-          if (module === 'Orders') {
-            fetchModule('Orders').then((rows) => {
-              setAllTickets((prev) => ({ ...prev, Orders: rows }));
-            });
-            return;
-          }
+    const activeChannels = [];
 
-          setAllTickets((prev) => {
-            const current = prev[module] || [];
-            if (payload.eventType === 'INSERT') {
-              const exists = current.some((t) => t.id === payload.new.id);
-              if (exists) return prev;
-              return { ...prev, [module]: [normalizeTicket(payload.new, module), ...current] };
-            } else if (payload.eventType === 'UPDATE') {
-              return {
-                ...prev,
-                [module]: current.map((t) =>
-                  t.id === payload.new.id ? normalizeTicket(payload.new, module) : t
-                ),
-              };
-            } else if (payload.eventType === 'DELETE') {
-              return {
-                ...prev,
-                [module]: current.filter((t) => t.id !== payload.old.id),
-              };
+    const setupRealtime = () => {
+      MODULES.forEach((module) => {
+        const table = MODULE_TABLE[module];
+        const channel = supabase
+          .channel(`${table}-rt-${module}`) // Unique channel name per module
+          .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+            // For Orders module, re-fetch to get joined vehicle data (flattened)
+            if (module === 'Orders') {
+              fetchModule('Orders').then((rows) => {
+                setAllTickets((prev) => ({ ...prev, Orders: rows }));
+              });
+              return;
             }
-            return prev;
-          });
 
-          if (payload.eventType === 'UPDATE') {
-            setDetailOrder((prev) =>
-              prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
-            );
-          }
-        })
-        .subscribe();
-    });
+            setAllTickets((prev) => {
+              const current = prev[module] || [];
+              if (payload.eventType === 'INSERT') {
+                const newTicket = normalizeTicket(payload.new, module);
+                // Deduplicate: check if ID already exists
+                if (current.some((t) => t.id === newTicket.id)) return prev;
+                return { ...prev, [module]: [newTicket, ...current] };
+              } 
+              
+              if (payload.eventType === 'UPDATE') {
+                const updatedTicket = normalizeTicket(payload.new, module);
+                return {
+                  ...prev,
+                  [module]: current.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)),
+                };
+              } 
+              
+              if (payload.eventType === 'DELETE') {
+                return {
+                  ...prev,
+                  [module]: current.filter((t) => t.id !== payload.old.id),
+                };
+              }
+              return prev;
+            });
+
+            if (payload.eventType === 'UPDATE') {
+              setDetailOrder((prev) =>
+                prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
+              );
+            }
+          })
+          .subscribe();
+        
+        activeChannels.push(channel);
+      });
+    };
+
+    setupRealtime();
+
     return () => {
-      channels.forEach((c) => supabase.removeChannel(c));
+      activeChannels.forEach((channel) => {
+        supabase.removeChannel(channel);
+      });
     };
   }, [fetchModule]);
 
