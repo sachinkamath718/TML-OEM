@@ -241,6 +241,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                     </button>
                   </>
                 )}
+              </div>
             ) : order.sim_expiry_date ? (
               <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: '#166534', fontWeight: 600 }}>
                 ✓ SIM is active
