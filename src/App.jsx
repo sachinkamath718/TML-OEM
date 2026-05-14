@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.14.4 - Fix Duplicate Tickets
+// Build Version: 2026.05.14.5 - Fix Tab Switch Duplicates
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -81,6 +81,7 @@ export default function App() {
   const [showBulkMove, setShowBulkMove] = useState(false);
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
+  const [switchLoading, setSwitchLoading] = useState(false);
 
   // ─── FIX: Guard ref — prevents realtime INSERT events firing during initial fetch ───
   const initialLoadDone = useRef(false);
@@ -132,6 +133,24 @@ export default function App() {
     if (error) throw error;
     return (data || []).map((t) => normalizeTicket(t, module));
   }, []);
+
+  // ─── Switch module — always re-fetch fresh to avoid stale/duplicated state ──
+  const handleModuleSwitch = useCallback(async (mod) => {
+    if (mod === activeModule) return;
+    // Reset bulk/search state inline (exitBulkMode defined below, but these are just setters)
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    setSearch('');
+    setActiveModule(mod);
+    setSwitchLoading(true);
+    try {
+      const fresh = await fetchModule(mod);
+      // Replace (not merge) the module's tickets entirely with fresh data
+      setAllTickets((prev) => ({ ...prev, [mod]: fresh }));
+      setLoadedMods((prev) => ({ ...prev, [mod]: true }));
+    } catch (_) {}
+    setSwitchLoading(false);
+  }, [activeModule, fetchModule]);
 
   // ─── Initial load ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -567,7 +586,7 @@ export default function App() {
     <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#F8FAFC', display: 'flex' }}>
       <Sidebar
         activeModule={activeModule}
-        onSelect={(m) => { setActiveModule(m); exitBulkMode(); setSearch(''); }}
+        onSelect={handleModuleSwitch}
         totalOrders={tickets.length}
       />
 
@@ -578,7 +597,7 @@ export default function App() {
             <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
             <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
               {tickets.length} total · {inProgressCount} in progress
-              {!loadedMods[activeModule] && (
+              {(switchLoading || !loadedMods[activeModule]) && (
                 <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>
               )}
             </div>
