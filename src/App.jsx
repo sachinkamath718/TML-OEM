@@ -246,6 +246,113 @@ export default function App() {
     if (error) console.warn('History write failed:', error.message);
   }
 
+  // ─── Fire outbound webhook to TML ─────────────────────────────────────────
+  async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
+    const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
+    const STATUS_MAP = {
+      in_progress: 'IN_PROGRESS', completed: 'COMPLETED',
+      on_hold: 'ON_HOLD', cancelled: 'CANCELLED',
+      cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST',
+    };
+    const statusStr = STATUS_MAP[rawStatus];
+    if (!statusStr) return; // don't fire for pending
+
+    try {
+      if (activeModule === 'AIS140') {
+        await fetch(`${apiBase}/webhooks/v2/ais140-requests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vin:       ticket.vin,
+            ticketNo:  ticket.ticket_no,
+            status:    statusStr,
+            remark:    extraFields.remark || '',
+            handler:   extraFields.handler || '',
+            handlerContact: extraFields.handler_contact || '',
+            updatedAt: new Date().toISOString(),
+            metadata:  {},
+          }),
+        });
+        console.log(`[outbound] AIS140 webhook fired: ${ticket.ticket_no} → ${statusStr}`);
+      }
+
+      if (activeModule === 'Mining') {
+        await fetch(`${apiBase}/webhooks/mining-requests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vin:       ticket.vin,
+            ticketNo:  ticket.mining_ticket_no || ticket.ticket_no,
+            status:    statusStr,
+            remark:    extraFields.remark || '',
+            handler:   extraFields.handler || '',
+            handlerContact: extraFields.handler_contact || '',
+            updatedAt: new Date().toISOString(),
+            metadata:  {},
+          }),
+        });
+        console.log(`[outbound] Mining webhook fired: ${ticket.mining_ticket_no} → ${statusStr}`);
+      }
+
+      if (activeModule === 'Installation' && rawStatus === 'completed') {
+        await fetch(`${apiBase}/webhooks/device-fitment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trackingId: ticket.tracking_id,
+            vin:        ticket.vin,
+            stage:      'DEVICE_INSTALLED',
+            updatedAt:  new Date().toISOString(),
+            meta: {
+              technicianName:  extraFields.technician_name || '',
+              installationDate: extraFields.scheduled_date || '',
+              remarks:         extraFields.remark || 'Marked completed from Kanban',
+            },
+          }),
+        });
+        console.log(`[outbound] DEVICE_INSTALLED webhook fired: ${ticket.tracking_id}`);
+      }
+
+      if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
+        await fetch(`${apiBase}/webhooks/device-fitment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trackingId: ticket.tracking_id,
+            vin:        ticket.vin,
+            stage:      'TCU_SHIPPED',
+            updatedAt:  new Date().toISOString(),
+            meta: {
+              iccId:                 extraFields.iccid || '',
+              courier:               extraFields.courier || '',
+              courierTrackingNumber: extraFields.awb_number || '',
+              expectedDelivery:      extraFields.expected_delivery || '',
+            },
+          }),
+        });
+        console.log(`[outbound] TCU_SHIPPED webhook fired: ${ticket.tracking_id}`);
+      }
+
+      if (activeModule === 'Delivery' && rawStatus === 'completed') {
+        await fetch(`${apiBase}/webhooks/device-fitment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trackingId: ticket.tracking_id,
+            vin:        ticket.vin,
+            stage:      'TCU_DELIVERED',
+            updatedAt:  new Date().toISOString(),
+            meta: { remarks: `Delivered to ${extraFields.delivered_to || ''}` },
+          }),
+        });
+        console.log(`[outbound] TCU_DELIVERED webhook fired: ${ticket.tracking_id}`);
+      }
+    } catch (webhookErr) {
+      // Non-blocking — log but don't fail the move
+      console.warn('[outbound] Webhook fire failed (non-blocking):', webhookErr.message);
+    }
+  }
+
   // ─── Single move ──────────────────────────────────────────────────────────
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
@@ -268,6 +375,8 @@ export default function App() {
       if (updateErr) throw updateErr;
 
       await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+      // Fire outbound webhook to TML (non-blocking)
+      fireOutboundWebhook(ticket, rawStatus, safeExtra);
 
       // For Orders, re-fetch to keep VIN join in sync
       if (activeModule === 'Orders') {

@@ -1,6 +1,6 @@
 -- ============================================================
--- TML-OEM Supabase Schema + Test Data
--- Run this in: supabase.com/dashboard/project/dfewivwmtnmwuikkjdor/sql/new
+-- TML-OEM Supabase Schema + Seed
+-- Run in: supabase.com/dashboard/project/dfewivwmtnmwuikkjdor/sql/new
 -- ============================================================
 
 -- 1. Orders
@@ -167,134 +167,127 @@ CREATE TABLE IF NOT EXISTS order_status_history (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 9. API Response Logs (stores every webhook/FleetEdge API call result)
+CREATE TABLE IF NOT EXISTS api_response_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  vin         TEXT,
+  tracking_id TEXT,
+  module      TEXT,          -- Shipment | Delivery | Installation | AIS140 | Mining
+  stage       TEXT,          -- e.g. SHIPMENT_DISPATCHED, DELIVERY_COMPLETED, etc.
+  request     JSONB,         -- what we sent
+  response    JSONB,         -- what we got back
+  status_code INTEGER,       -- HTTP status code from the external call
+  success     BOOLEAN,       -- true if 2xx
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ============================================================
--- SEED: 3 iTriangle Test Vehicles
+-- CLEANUP + RESEED
+-- Clears ALL data and seeds exactly 3 test vehicles.
+-- Run this entire block in Supabase SQL Editor.
 -- ============================================================
 
--- Step 0: Ensure api_clients row exists for itriangle
+-- ── Step 0: Delete all data (order matters for FK constraints) ────────────────
+DELETE FROM order_status_history;
+DELETE FROM mining_tickets;
+DELETE FROM ais140_tickets;
+DELETE FROM installation_tickets;
+DELETE FROM delivery_tickets;
+DELETE FROM shipment_tickets;
+DELETE FROM order_vehicles;
+DELETE FROM orders;
+
+-- Reset sequences so IDs start cleanly from 1
+ALTER SEQUENCE orders_id_seq                RESTART WITH 1;
+ALTER SEQUENCE order_vehicles_id_seq        RESTART WITH 1;
+ALTER SEQUENCE shipment_tickets_id_seq      RESTART WITH 1;
+ALTER SEQUENCE delivery_tickets_id_seq      RESTART WITH 1;
+ALTER SEQUENCE installation_tickets_id_seq  RESTART WITH 1;
+ALTER SEQUENCE ais140_tickets_id_seq        RESTART WITH 1;
+ALTER SEQUENCE mining_tickets_id_seq        RESTART WITH 1;
+ALTER SEQUENCE order_status_history_id_seq  RESTART WITH 1;
+
+-- ── Step 1: Ensure api_clients row exists (needed for client_ref_id FK) ───────
 INSERT INTO api_clients (client_id, client_secret, client_name, status)
 VALUES ('itriangle', 'webhook-auto', 'iTriangle FleetEdge', 1)
 ON CONFLICT (client_id) DO NOTHING;
 
--- Step 1: Insert the order (uses client_ref_id from api_clients)
+-- ── Step 2: Insert 1 order (all 3 vehicles belong to this order) ──────────────
 INSERT INTO orders (order_number, tml_order_id, tracking_id, client_ref_id, status, created_by)
 SELECT
-  'WH-ITRIANGLE-TEST-001',
-  'WH-ITRIANGLE-TEST-001',
+  'WH-ITRIANGLE-001',
+  'WH-ITRIANGLE-001',
   'TRK-1778594367038-6435A639',
-  id,
+  ac.id,
   'pending',
-  'itriangle-webhook'
-FROM api_clients WHERE client_id = 'itriangle' LIMIT 1
-ON CONFLICT (order_number) DO NOTHING;
+  'SYSTEM'
+FROM api_clients ac
+WHERE ac.client_id = 'itriangle'
+LIMIT 1;
 
--- Step 2: Insert order vehicles
+-- ── Step 3: Insert 3 order_vehicles ──────────────────────────────────────────
 INSERT INTO order_vehicles (order_id, vin, tracking_id, ticket_id, status, ais140_ticket_no, mining_ticket_no, make, model)
 SELECT
   o.id,
-  v.vin, v.tracking_id, v.ticket_id, 'pending', v.ais_no, v.min_no,
-  'TATA', 'MAT Series'
+  v.vin,
+  v.tracking_id,
+  v.ticket_id,
+  'pending',
+  v.ais_no,
+  v.min_no,
+  'TATA',
+  'MAT Series'
 FROM orders o,
   (VALUES
-    ('MAT800313N8H16571','TRK-1778594367038-6435A639','TKT-TRK-1778594367038-6435A639','AIS-TRK-1778594367038-6435A639','MIN-TRK-1778594367038-6435A639'),
-    ('MAT800313N8H16572','TRK-1778595514787-5D91DE01', 'TKT-TRK-1778595514787-5D91DE01', 'AIS-TRK-1778595514787-5D91DE01', 'MIN-TRK-1778595514787-5D91DE01'),
-    ('MAT800313N8H16573','TRK-1778596418166-90CD9AB7', 'TKT-TRK-1778596418166-90CD9AB7', 'AIS-TRK-1778596418166-90CD9AB7', 'MIN-TRK-1778596418166-90CD9AB7')
+    ('MAT800313N8H16571','TRK-1778594367038-6435A639','TKT-16571','AIS-16571','MIN-16571'),
+    ('MAT800313N8H16572','TRK-1778595514787-5D91DE01','TKT-16572','AIS-16572','MIN-16572'),
+    ('MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TKT-16573','AIS-16573','MIN-16573')
   ) AS v(vin, tracking_id, ticket_id, ais_no, min_no)
-WHERE o.order_number = 'WH-ITRIANGLE-TEST-001'
-ON CONFLICT (vin) DO NOTHING;
+WHERE o.order_number = 'WH-ITRIANGLE-001';
 
--- Step 3: Shipment tickets
-INSERT INTO shipment_tickets (ticket_no, vin, tracking_id, status)
-VALUES
-  ('TKT-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending'),
-  ('TKT-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending'),
-  ('TKT-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending')
-ON CONFLICT (ticket_no) DO NOTHING;
-
--- Step 4: Delivery tickets
-INSERT INTO delivery_tickets (ticket_no, vin, tracking_id, status)
-VALUES
-  ('TKT-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending'),
-  ('TKT-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending'),
-  ('TKT-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending')
-ON CONFLICT (ticket_no) DO NOTHING;
-
--- Step 5: Installation tickets
-INSERT INTO installation_tickets (ticket_no, vin, tracking_id, status, sim_expiry_date)
-VALUES
-  ('INS-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('INS-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('INS-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (ticket_no) DO NOTHING;
-
--- Step 6: AIS140 tickets (VIN-1 sim expires tomorrow — tests SE button alert)
-INSERT INTO ais140_tickets (ticket_no, vin, tracking_id, order_tracking_id, status, sim_expiry_date)
-VALUES
-  ('AIS-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('AIS-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('AIS-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (ticket_no) DO NOTHING;
-
--- Step 7: Mining tickets
-INSERT INTO mining_tickets (mining_ticket_no, vin, tracking_id, order_tracking_id, status, sim_expiry_date)
-VALUES
-  ('MIN-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('MIN-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('MIN-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (mining_ticket_no) DO NOTHING;
-
-
--- Insert order vehicles
-INSERT INTO order_vehicles (order_id, vin, tracking_id, ticket_id, status, ais140_ticket_no, mining_ticket_no, make, model)
-SELECT
-  o.id,
-  v.vin, v.tracking_id, v.ticket_id, 'pending', v.ais_no, v.min_no,
-  'TATA', 'MAT Series'
+-- ── Step 4: Shipment tickets ──────────────────────────────────────────────────
+INSERT INTO shipment_tickets (ticket_no, vin, tracking_id, order_id, status)
+SELECT 'SHP-' || v.short, v.vin, v.tid, o.id, 'pending'
 FROM orders o,
   (VALUES
-    ('MAT800313N8H16571','TRK-1778594367038-6435A639','TKT-TRK-1778594367038-6435A639','AIS-TRK-1778594367038-6435A639','MIN-TRK-1778594367038-6435A639'),
-    ('MAT800313N8H16572','TRK-1778595514787-5D91DE01', 'TKT-TRK-1778595514787-5D91DE01', 'AIS-TRK-1778595514787-5D91DE01', 'MIN-TRK-1778595514787-5D91DE01'),
-    ('MAT800313N8H16573','TRK-1778596418166-90CD9AB7', 'TKT-TRK-1778596418166-90CD9AB7', 'AIS-TRK-1778596418166-90CD9AB7', 'MIN-TRK-1778596418166-90CD9AB7')
-  ) AS v(vin, tracking_id, ticket_id, ais_no, min_no)
-WHERE o.order_number = 'WH-ITRIANGLE-TEST-001'
-ON CONFLICT (vin) DO NOTHING;
+    ('16571','MAT800313N8H16571','TRK-1778594367038-6435A639'),
+    ('16572','MAT800313N8H16572','TRK-1778595514787-5D91DE01'),
+    ('16573','MAT800313N8H16573','TRK-1778596418166-90CD9AB7')
+  ) AS v(short, vin, tid)
+WHERE o.order_number = 'WH-ITRIANGLE-001';
 
--- Shipment tickets
-INSERT INTO shipment_tickets (ticket_no, vin, tracking_id, status)
-VALUES
-  ('TKT-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending'),
-  ('TKT-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending'),
-  ('TKT-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending')
-ON CONFLICT (ticket_no) DO NOTHING;
+-- ── Step 5: Delivery tickets ──────────────────────────────────────────────────
+INSERT INTO delivery_tickets (ticket_no, vin, tracking_id, order_id, status)
+SELECT 'DLV-' || v.short, v.vin, v.tid, o.id, 'pending'
+FROM orders o,
+  (VALUES
+    ('16571','MAT800313N8H16571','TRK-1778594367038-6435A639'),
+    ('16572','MAT800313N8H16572','TRK-1778595514787-5D91DE01'),
+    ('16573','MAT800313N8H16573','TRK-1778596418166-90CD9AB7')
+  ) AS v(short, vin, tid)
+WHERE o.order_number = 'WH-ITRIANGLE-001';
 
--- Delivery tickets
-INSERT INTO delivery_tickets (ticket_no, vin, tracking_id, status)
-VALUES
-  ('TKT-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending'),
-  ('TKT-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending'),
-  ('TKT-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending')
-ON CONFLICT (ticket_no) DO NOTHING;
+-- ── Step 6: Installation tickets ─────────────────────────────────────────────
+INSERT INTO installation_tickets (ticket_no, vin, tracking_id, order_id, status, sim_expiry_date)
+SELECT 'INS-' || v.short, v.vin, v.tid, o.id, 'pending', v.sim::DATE
+FROM orders o,
+  (VALUES
+    ('16571','MAT800313N8H16571','TRK-1778594367038-6435A639','2026-05-14'),
+    ('16572','MAT800313N8H16572','TRK-1778595514787-5D91DE01','2027-03-31'),
+    ('16573','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','2027-06-30')
+  ) AS v(short, vin, tid, sim)
+WHERE o.order_number = 'WH-ITRIANGLE-001';
 
--- Installation tickets
-INSERT INTO installation_tickets (ticket_no, vin, tracking_id, status, sim_expiry_date)
-VALUES
-  ('INS-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('INS-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('INS-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (ticket_no) DO NOTHING;
-
--- AIS140 tickets (VIN-1 has an expiring SIM for testing SE button)
+-- ── Step 7: AIS140 tickets ────────────────────────────────────────────────────
 INSERT INTO ais140_tickets (ticket_no, vin, tracking_id, order_tracking_id, status, sim_expiry_date)
 VALUES
-  ('AIS-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('AIS-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('AIS-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (ticket_no) DO NOTHING;
+  ('AIS-16571','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
+  ('AIS-16572','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
+  ('AIS-16573','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30');
 
--- Mining tickets
+-- ── Step 8: Mining tickets ────────────────────────────────────────────────────
 INSERT INTO mining_tickets (mining_ticket_no, vin, tracking_id, order_tracking_id, status, sim_expiry_date)
 VALUES
-  ('MIN-TRK-1778594367038-6435A639','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
-  ('MIN-TRK-1778595514787-5D91DE01','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
-  ('MIN-TRK-1778596418166-90CD9AB7','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30')
-ON CONFLICT (mining_ticket_no) DO NOTHING;
+  ('MIN-16571','MAT800313N8H16571','TRK-1778594367038-6435A639','TRK-1778594367038-6435A639','pending','2026-05-14'),
+  ('MIN-16572','MAT800313N8H16572','TRK-1778595514787-5D91DE01','TRK-1778595514787-5D91DE01','pending','2027-03-31'),
+  ('MIN-16573','MAT800313N8H16573','TRK-1778596418166-90CD9AB7','TRK-1778596418166-90CD9AB7','pending','2027-06-30');

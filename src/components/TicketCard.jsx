@@ -1,49 +1,27 @@
 import { useState } from 'react';
-import { supabase } from '../supabaseClient';
 import { formatDate } from '../utils';
 
 export default function TicketCard({ order, module, onMoveClick, onHistoryClick, selected, onSelect, bulkMode }) {
   // Use order._module as the primary source of truth (set by normalizeTicket).
-  // Falls back to the `module` prop as a safety net.
   const mod = order._module || module;
   const [hovered, setHovered] = useState(false);
 
-  // SE button state (Installation)
-  const [showSimModal, setShowSimModal] = useState(false);
-  const [simHovered, setSimHovered] = useState(false);
-  const [simData, setSimData] = useState(null);
-  const [simLoading, setSimLoading] = useState(false);
+  // ── SE: SIM Expiry modal (AIS140 + Mining) ──────────────────────────────
+  const [showSimModal,  setShowSimModal]  = useState(false);
+  const [simHovered,    setSimHovered]    = useState(false);
+  const [simExtLoading, setSimExtLoading] = useState(false);
+  const [simExtDone,    setSimExtDone]    = useState(false);
+  const [simExtError,   setSimExtError]   = useState('');
 
-  // IMEI button state (AIS140)
-  const [showImeiModal, setShowImeiModal] = useState(false);
-  const [imeiHovered, setImeiHovered] = useState(false);
-  const [imeiValue, setImeiValue] = useState('');
-  const [imeiLoading, setImeiLoading] = useState(false);
-  const [imeiSaved, setImeiSaved] = useState(false);
-
-  // Device status button state (AIS140)
+  // ── DS: Device Status modal (Installation) ───────────────────────────────
   const [showDevModal, setShowDevModal] = useState(false);
-  const [devHovered, setDevHovered] = useState(false);
-  const [devData, setDevData] = useState(null);
-  const [devLoading, setDevLoading] = useState(false);
+  const [devHovered,   setDevHovered]   = useState(false);
+  const [devData,      setDevData]      = useState(null);
+  const [devLoading,   setDevLoading]   = useState(false);
 
   function handleClick() {
     if (bulkMode) onSelect(order.id);
     else onHistoryClick(order);
-  }
-
-  // ── SE: fetch SIM expiry from order_vehicles ──────────────────────────────
-  async function handleCheckSim(e) {
-    e.stopPropagation();
-    setShowSimModal(true);
-    setSimLoading(true);
-    const { data, error } = await supabase
-      .from('order_vehicles')
-      .select('sim_expiry_date, vin, iccid')
-      .eq('vin', order.vin)
-      .single();
-    setSimData(error ? null : data);
-    setSimLoading(false);
   }
 
   function isSimExpired(dateStr) {
@@ -51,21 +29,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     return new Date(dateStr) < new Date();
   }
 
-  // ── IMEI: save to order_vehicles.device_imei ──────────────────────────────
-  async function handleSaveImei(e) {
-    e.stopPropagation();
-    if (!imeiValue.trim()) return;
-    setImeiLoading(true);
-    await supabase
-      .from('order_vehicles')
-      .update({ device_imei: imeiValue.trim() })
-      .eq('vin', order.vin);
-    setImeiLoading(false);
-    setImeiSaved(true);
-    setTimeout(() => { setImeiSaved(false); setShowImeiModal(false); }, 1200);
-  }
-
-  // ── Device status: call tml-api proxy → FleetEdge ──────────────────────────
+  // ── DS: call tml-api proxy → FleetEdge ──────────────────────────────────
   async function handleCheckDevice(e) {
     e.stopPropagation();
     setShowDevModal(true);
@@ -73,13 +37,9 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     setDevData(null);
     try {
       const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
-      const res = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
+      const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
       const json = await res.json();
-      if (json.data) {
-        setDevData(json.data);
-      } else {
-        setDevData({ onlineStatus: 'Error', error: json.err?.message || 'Unknown error' });
-      }
+      setDevData(json.data || { onlineStatus: 'Error', error: json.err?.message || 'Unknown error' });
     } catch (err) {
       setDevData({ onlineStatus: 'Error', error: 'Network error — ' + err.message });
     } finally {
@@ -101,12 +61,14 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         onMouseLeave={() => setHovered(false)}
         onClick={handleClick}
         style={{
-          background: selected ? '#EFF6FF' : hovered ? '#F8FAFC' : '#fff',
-          border: `1px solid ${selected ? '#2563EB' : hovered ? '#CBD5E1' : '#E2E8F0'}`,
+          background:   selected ? '#EFF6FF' : hovered ? '#F8FAFC' : '#fff',
+          border:       `1px solid ${selected ? '#2563EB' : hovered ? '#CBD5E1' : '#E2E8F0'}`,
           borderRadius: 7, padding: '8px 11px', marginBottom: 5,
           cursor: 'pointer', transition: 'all 0.12s ease',
           display: 'flex', alignItems: 'center', gap: 8,
-          boxShadow: selected ? '0 0 0 2px rgba(37,99,235,0.15)' : hovered ? '0 1px 4px rgba(0,0,0,0.06)' : 'none',
+          boxShadow: selected
+            ? '0 0 0 2px rgba(37,99,235,0.15)'
+            : hovered ? '0 1px 4px rgba(0,0,0,0.06)' : 'none',
         }}
       >
         {/* Checkbox */}
@@ -136,15 +98,20 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         {!bulkMode && (
           <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
 
-            {/* Installation: SE button */}
-            {mod === 'Installation' && (
+            {/* AIS140 + Mining: SE button (SIM Expiry) */}
+            {(mod === 'AIS140' || mod === 'Mining') && (
               <div style={{ position: 'relative' }}
                 onMouseEnter={() => setSimHovered(true)}
                 onMouseLeave={() => setSimHovered(false)}
               >
                 <button
-                  onClick={handleCheckSim}
-                  style={{ ...btnBase, background: '#F0FDF4', color: '#166534', border: '1px solid #BBF7D0' }}
+                  onClick={(e) => { e.stopPropagation(); setShowSimModal(true); }}
+                  style={{
+                    ...btnBase,
+                    background: isSimExpired(order.sim_expiry_date) ? '#FEF2F2' : '#F0FDF4',
+                    color:      isSimExpired(order.sim_expiry_date) ? '#DC2626' : '#166534',
+                    border:     `1px solid ${isSimExpired(order.sim_expiry_date) ? '#FECACA' : '#BBF7D0'}`,
+                  }}
                 >
                   SE
                 </button>
@@ -155,58 +122,35 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                     padding: '4px 8px', borderRadius: 5, whiteSpace: 'nowrap',
                     pointerEvents: 'none', zIndex: 10,
                   }}>
-                    Check SIM Expiry
+                    {isSimExpired(order.sim_expiry_date) ? '⚠ SIM Expired' : 'Check SIM Expiry'}
                   </div>
                 )}
               </div>
             )}
 
-            {/* AIS140 + Mining: IMEI + Device Status buttons */}
-            {(mod === 'AIS140' || mod === 'Mining') && (
-              <>
-                <div style={{ position: 'relative' }}
-                  onMouseEnter={() => setImeiHovered(true)}
-                  onMouseLeave={() => setImeiHovered(false)}
+            {/* Installation: DS button (Device Status) */}
+            {mod === 'Installation' && (
+              <div style={{ position: 'relative' }}
+                onMouseEnter={() => setDevHovered(true)}
+                onMouseLeave={() => setDevHovered(false)}
+              >
+                <button
+                  onClick={handleCheckDevice}
+                  style={{ ...btnBase, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA' }}
                 >
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setShowImeiModal(true); setImeiValue(''); setImeiSaved(false); }}
-                    style={{ ...btnBase, background: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' }}
-                  >
-                    IMEI
-                  </button>
-                  {imeiHovered && (
-                    <div style={{
-                      position: 'absolute', bottom: '110%', right: 0,
-                      background: '#1E293B', color: '#fff', fontSize: 10,
-                      padding: '4px 8px', borderRadius: 5, whiteSpace: 'nowrap',
-                      pointerEvents: 'none', zIndex: 10,
-                    }}>
-                      Update Device IMEI
-                    </div>
-                  )}
-                </div>
-                <div style={{ position: 'relative' }}
-                  onMouseEnter={() => setDevHovered(true)}
-                  onMouseLeave={() => setDevHovered(false)}
-                >
-                  <button
-                    onClick={handleCheckDevice}
-                    style={{ ...btnBase, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA' }}
-                  >
-                    DS
-                  </button>
-                  {devHovered && (
-                    <div style={{
-                      position: 'absolute', bottom: '110%', right: 0,
-                      background: '#1E293B', color: '#fff', fontSize: 10,
-                      padding: '4px 8px', borderRadius: 5, whiteSpace: 'nowrap',
-                      pointerEvents: 'none', zIndex: 10,
-                    }}>
-                      Check Device Status
-                    </div>
-                  )}
-                </div>
-              </>
+                  DS
+                </button>
+                {devHovered && (
+                  <div style={{
+                    position: 'absolute', bottom: '110%', right: 0,
+                    background: '#1E293B', color: '#fff', fontSize: 10,
+                    padding: '4px 8px', borderRadius: 5, whiteSpace: 'nowrap',
+                    pointerEvents: 'none', zIndex: 10,
+                  }}>
+                    Check Device Status
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Move button */}
@@ -220,7 +164,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         )}
       </div>
 
-      {/* ── SIM Expiry Modal ───────────────────────────────────────────────── */}
+      {/* ── SIM Expiry Modal (AIS140 + Mining) ────────────────────────────────── */}
       {showSimModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={(e) => { e.stopPropagation(); setShowSimModal(false); }}
@@ -231,45 +175,78 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
             <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginBottom: 4 }}>SIM Expiry</div>
             <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: "'DM Mono', monospace", marginBottom: 16 }}>{order.vin}</div>
 
-            {simLoading ? (
-              <div style={{ fontSize: 12, color: '#94A3B8' }}>Loading…</div>
-            ) : simData ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: '#64748B' }}>ICCID</span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>{simData.iccid || '—'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <span style={{ fontSize: 12, color: '#64748B' }}>Expiry Date</span>
-                  <span style={{
-                    fontSize: 12, fontWeight: 700,
-                    color: isSimExpired(simData.sim_expiry_date) ? '#DC2626' : '#166534',
-                    fontFamily: "'DM Mono', monospace",
-                  }}>
-                    {simData.sim_expiry_date ? new Date(simData.sim_expiry_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'}
-                  </span>
-                </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Device IMEI</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>{order.device_imei || '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Expiry Date</span>
+              <span style={{
+                fontSize: 12, fontWeight: 700,
+                color: isSimExpired(order.sim_expiry_date) ? '#DC2626' : '#166534',
+                fontFamily: "'DM Mono', monospace",
+              }}>
+                {order.sim_expiry_date
+                  ? new Date(order.sim_expiry_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+                  : '—'}
+              </span>
+            </div>
 
-                {isSimExpired(simData.sim_expiry_date) && (
-                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: '#DC2626', fontWeight: 600, marginBottom: 6 }}>⚠ SIM Expired</div>
+            {isSimExpired(order.sim_expiry_date) ? (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: '#DC2626', fontWeight: 600, marginBottom: 6 }}>⚠ SIM Expired</div>
+                {simExtDone ? (
+                  <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '6px 12px' }}>
+                    ✓ Extension requested successfully
+                  </div>
+                ) : (
+                  <>
+                    {simExtError && (
+                      <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 6 }}>{simExtError}</div>
+                    )}
                     <button
-                      onClick={(e) => { e.stopPropagation(); alert('SIM Extension API will be wired here.'); }}
-                      style={{ fontSize: 12, padding: '6px 16px', borderRadius: 7, border: 'none', background: '#DC2626', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                      disabled={simExtLoading}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const iccId = order.iccid || order.device_iccid || order.icc_id;
+                        if (!iccId) { setSimExtError('No ICCID found for this ticket.'); return; }
+                        setSimExtLoading(true);
+                        setSimExtError('');
+                        try {
+                          const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
+                          // Extend by 1 year from today
+                          const newExpiry = new Date();
+                          newExpiry.setFullYear(newExpiry.getFullYear() + 1);
+                          const expiryDate = newExpiry.toISOString().split('T')[0];
+                          const res = await fetch(`${apiBase}/sim/expiry`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ iccId, expiryDate }),
+                          });
+                          if (!res.ok) {
+                            const err = await res.json();
+                            setSimExtError(err?.err?.message || 'Extension failed.');
+                          } else {
+                            setSimExtDone(true);
+                          }
+                        } catch (err) {
+                          setSimExtError('Network error: ' + err.message);
+                        } finally {
+                          setSimExtLoading(false);
+                        }
+                      }}
+                      style={{ fontSize: 12, padding: '6px 16px', borderRadius: 7, border: 'none', background: simExtLoading ? '#94A3B8' : '#DC2626', color: '#fff', fontWeight: 600, cursor: simExtLoading ? 'not-allowed' : 'pointer' }}
                     >
-                      Request SIM Extension
+                      {simExtLoading ? 'Requesting…' : 'Request SIM Extension'}
                     </button>
-                  </div>
+                  </>
                 )}
-
-                {!isSimExpired(simData.sim_expiry_date) && (
-                  <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: '#166534', fontWeight: 600 }}>
-                    ✓ SIM is active
-                  </div>
-                )}
-              </>
+            ) : order.sim_expiry_date ? (
+              <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '8px 12px', fontSize: 11, color: '#166534', fontWeight: 600 }}>
+                ✓ SIM is active
+              </div>
             ) : (
-              <div style={{ fontSize: 12, color: '#94A3B8' }}>No SIM data found for this VIN.</div>
+              <div style={{ fontSize: 12, color: '#94A3B8' }}>No SIM data for this VIN.</div>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
@@ -281,50 +258,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
         </div>
       )}
 
-      {/* ── IMEI Update Modal ──────────────────────────────────────────────── */}
-      {showImeiModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={(e) => { e.stopPropagation(); setShowImeiModal(false); }}
-        >
-          <div style={{ background: '#fff', borderRadius: 12, padding: '24px 28px', width: 360, maxWidth: '94vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', marginBottom: 4 }}>Update Device IMEI</div>
-            <div style={{ fontSize: 11, color: '#94A3B8', fontFamily: "'DM Mono', monospace", marginBottom: 16 }}>{order.vin}</div>
-
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 5 }}>
-              Device IMEI / Serial No.
-            </label>
-            <input
-              value={imeiValue}
-              onChange={(e) => setImeiValue(e.target.value)}
-              placeholder="e.g. 356938035651001"
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13, outline: 'none', boxSizing: 'border-box', marginBottom: 16 }}
-            />
-
-            {imeiSaved && (
-              <div style={{ fontSize: 12, color: '#166534', background: '#F0FDF4', borderRadius: 7, padding: '7px 12px', marginBottom: 12 }}>
-                ✓ Saved successfully
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={(e) => { e.stopPropagation(); setShowImeiModal(false); }} style={{ padding: '7px 18px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#F8FAFC', fontSize: 12, cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveImei}
-                disabled={imeiLoading || !imeiValue.trim()}
-                style={{ padding: '7px 18px', borderRadius: 8, border: 'none', background: imeiValue.trim() ? '#2563EB' : '#CBD5E1', color: '#fff', fontSize: 12, fontWeight: 600, cursor: imeiValue.trim() ? 'pointer' : 'not-allowed' }}
-              >
-                {imeiLoading ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Device Status Modal ────────────────────────────────────────────── */}
+      {/* ── Device Status Modal (Installation) ────────────────────────────────── */}
       {showDevModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={(e) => { e.stopPropagation(); setShowDevModal(false); }}
@@ -339,23 +273,33 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
               <div style={{ fontSize: 12, color: '#94A3B8', textAlign: 'center', padding: '16px 0' }}>Fetching device status…</div>
             ) : devData ? (
               <>
-                {/* Online / Offline badge */}
                 {devData.onlineStatus && (
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: 10,
-                    background: devData.onlineStatus === 'Online' ? '#F0FDF4' : devData.onlineStatus === 'Partial' ? '#FEF3C7' : '#FEF2F2',
-                    border: `1px solid ${devData.onlineStatus === 'Online' ? '#BBF7D0' : devData.onlineStatus === 'Partial' ? '#FDE68A' : '#FECACA'}`,
+                    background:
+                      devData.onlineStatus === 'Online'  ? '#F0FDF4' :
+                      devData.onlineStatus === 'Partial' ? '#FEF3C7' : '#FEF2F2',
+                    border: `1px solid ${
+                      devData.onlineStatus === 'Online'  ? '#BBF7D0' :
+                      devData.onlineStatus === 'Partial' ? '#FDE68A' : '#FECACA'}`,
                     borderRadius: 8, padding: '10px 14px', marginBottom: 14,
                   }}>
                     <div style={{
                       width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                      background: devData.onlineStatus === 'Online' ? '#22C55E' : devData.onlineStatus === 'Partial' ? '#F59E0B' : '#EF4444',
+                      background:
+                        devData.onlineStatus === 'Online'  ? '#22C55E' :
+                        devData.onlineStatus === 'Partial' ? '#F59E0B' : '#EF4444',
                       boxShadow: devData.onlineStatus === 'Online' ? '0 0 0 3px rgba(34,197,94,0.25)' : 'none',
                     }} />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: devData.onlineStatus === 'Online' ? '#166534' : devData.onlineStatus === 'Partial' ? '#92400E' : '#991B1B' }}>
+                    <span style={{
+                      fontSize: 13, fontWeight: 700,
+                      color:
+                        devData.onlineStatus === 'Online'  ? '#166534' :
+                        devData.onlineStatus === 'Partial' ? '#92400E' : '#991B1B',
+                    }}>
                       {devData.onlineStatus}
                     </span>
-                    {devData.receivedMessages && devData.receivedMessages.length > 0 && (
+                    {devData.receivedMessages?.length > 0 && (
                       <span style={{ fontSize: 10, color: '#64748B', marginLeft: 'auto' }}>
                         {devData.receivedMessages.join(' · ')}
                       </span>
@@ -363,16 +307,15 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                   </div>
                 )}
 
-                {/* Detail rows */}
                 <div style={{ background: '#F8FAFC', borderRadius: 8, padding: '12px 14px' }}>
                   {devData.error ? (
                     <div style={{ fontSize: 12, color: '#DC2626' }}>{devData.error}</div>
                   ) : (
                     [
-                      ['Telemetry Last Seen', devData.telemetryLastMessageDateTime],
-                      ['CAN Last Seen', devData.canLastMessageDateTime],
-                      ['Telemetry Odometer', devData.telemetryOdometer != null ? `${devData.telemetryOdometer} km` : null],
-                      ['CAN Odometer', devData.canOdometer != null ? `${devData.canOdometer} km` : null],
+                      ['Telemetry Last Seen',  devData.telemetryLastMessageDateTime],
+                      ['CAN Last Seen',        devData.canLastMessageDateTime],
+                      ['Telemetry Odometer',   devData.telemetryOdometer   != null ? `${devData.telemetryOdometer} km`   : null],
+                      ['CAN Odometer',         devData.canOdometer         != null ? `${devData.canOdometer} km`         : null],
                     ].filter(([, v]) => v != null).map(([label, value]) => (
                       <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                         <span style={{ fontSize: 11, color: '#64748B' }}>{label}</span>
