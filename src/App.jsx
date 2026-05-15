@@ -46,6 +46,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [moveTarget, setMoveTarget] = useState(null);
   const [detailOrder, setDetailOrder] = useState(null);
+  const [showNewOrder, setShowNewOrder] = useState(false);
 
   const activeModuleRef = useRef(activeModule);
   useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
