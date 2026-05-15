@@ -70,14 +70,14 @@ function displayToRaw(display) {
   return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
-// ─── Strict dedup: returns a new array with duplicates removed ──────────────
-// Orders: dedup key is id+vin (because one order row is flattened per vehicle)
-// All others: dedup key is id only
+// ─── Strict dedup ────────────────────────────────────────────────────────────
+// Orders: key = _vehicle_tracking_id (unique per vehicle row, never collides)
+// All others: key = id (each ticket has its own row)
 function dedupTickets(tickets, module) {
   const seen = new Map();
   for (const t of tickets) {
     const key = module === 'Orders'
-      ? `${t.id}-${t.vin || t.tracking_id || ''}`
+      ? String(t._vehicle_tracking_id || t.tracking_id || `${t.id}-${t.vin || ''}`)
       : String(t.id);
     if (!seen.has(key)) seen.set(key, t);
   }
@@ -100,8 +100,6 @@ export default function App() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
 
-  // Tracks which module is actively being fetched — realtime ignores stale fetches
-  const fetchingModule = useRef(null);
   // Tracks the current active module for realtime handler closures
   const activeModuleRef = useRef(activeModule);
   useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
@@ -181,36 +179,63 @@ export default function App() {
     init();
   }, []); // eslint-disable-line
 
-  // ─── Realtime: only subscribe to active module, always full-replace ────────
+  // ─── Realtime subscriptions ───────────────────────────────────────────────
   useEffect(() => {
-    let channel = null;
-    let isCurrent = true; // guards against stale closures after cleanup
+    let isCurrent = true;
+    const channels = [];
 
     const module = activeModule;
     const table  = MODULE_TABLE[module];
 
-    channel = supabase
-      .channel(`rt-${module}-${Date.now()}`) // unique channel name prevents ghost subscriptions
+    // For Orders we need to watch both tables:
+    //   • 'orders'         — new orders inserted
+    //   • 'order_vehicles' — per-vehicle status updates
+    // We debounce the re-fetch so rapid-fire events don't cause double-replace.
+    if (module === 'Orders') {
+      let debounceTimer = null;
+      const scheduleRefetch = () => {
+        if (!isCurrent) return;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!isCurrent) return;
+          fetchModule('Orders').then((rows) => {
+            if (!isCurrent) return;
+            setTicketMap((prev) => ({ ...prev, Orders: rows }));
+          });
+        }, 150); // 150 ms debounce — collapses burst events into one fetch
+      };
+
+      const ordersChannel = supabase
+        .channel(`rt-orders-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefetch)
+        .subscribe();
+
+      const vehiclesChannel = supabase
+        .channel(`rt-order_vehicles-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'order_vehicles' }, scheduleRefetch)
+        .subscribe();
+
+      channels.push(ordersChannel, vehiclesChannel);
+
+      return () => {
+        isCurrent = false;
+        clearTimeout(debounceTimer);
+        channels.forEach((ch) => supabase.removeChannel(ch));
+      };
+    }
+
+    // All other modules: surgical in-place updates (no full re-fetch on UPDATE)
+    const channel = supabase
+      .channel(`rt-${module}-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
         if (!isCurrent) return;
         if (activeModuleRef.current !== module) return;
-
-        if (module === 'Orders') {
-          // For Orders, always do a full DB re-fetch (flattened join rows can't be built from payload alone)
-          fetchModule('Orders').then((rows) => {
-            if (!isCurrent) return;
-            // Full replace — no merging
-            setTicketMap((prev) => ({ ...prev, Orders: rows }));
-          });
-          return;
-        }
 
         setTicketMap((prev) => {
           const current = prev[module] || [];
 
           if (payload.eventType === 'INSERT') {
             const newTicket = normalizeTicket(payload.new, module);
-            // Skip if already present (guard against duplicate realtime events)
             if (current.some((t) => String(t.id) === String(newTicket.id))) return prev;
             return { ...prev, [module]: [newTicket, ...current] };
           }
@@ -218,10 +243,13 @@ export default function App() {
           if (payload.eventType === 'UPDATE') {
             const updated = normalizeTicket(payload.new, module);
             const exists  = current.some((t) => String(t.id) === String(updated.id));
-            const next    = exists
-              ? current.map((t) => (String(t.id) === String(updated.id) ? updated : t))
-              : current; // don't add if not present — avoids phantom rows
-            return { ...prev, [module]: next };
+            if (!exists) return prev; // don't add phantom rows
+            return {
+              ...prev,
+              [module]: current.map((t) =>
+                String(t.id) === String(updated.id) ? updated : t
+              ),
+            };
           }
 
           if (payload.eventType === 'DELETE') {
@@ -242,11 +270,13 @@ export default function App() {
       })
       .subscribe();
 
+    channels.push(channel);
+
     return () => {
       isCurrent = false;
-      supabase.removeChannel(channel);
+      channels.forEach((ch) => supabase.removeChannel(ch));
     };
-  }, [activeModule, fetchModule]); // re-subscribes on every module switch
+  }, [activeModule, fetchModule]);
 
   // ─── Switch module: full fresh fetch, full replace ────────────────────────
   const handleModuleSwitch = useCallback(async (mod) => {
