@@ -75,18 +75,26 @@ function dedupTickets(tickets, module) {
   const seen = new Map();
   for (const t of tickets) {
     let key;
+    const normVin = String(t.vin || '').trim().toUpperCase();
+    const normTrk = String(t.tracking_id || '').trim().toUpperCase();
+    
     if (module === 'Orders') {
-      key = `${t.id}-${t.vin || t.tracking_id || ''}`;
+      // For Orders, uniqueness is OrderID + VIN
+      key = `${t.id}-${normVin || normTrk}`;
     } else {
-      key = t.vin || t.tracking_id || String(t.id);
+      // For others, uniqueness is VIN (or Tracking ID if VIN is missing)
+      key = normVin || normTrk || String(t.id);
     }
+    
     if (!seen.has(key)) {
       seen.set(key, t);
     } else {
       const existing = seen.get(key);
-      const existingDate = new Date(existing.updated_at || 0);
-      const newDate = new Date(t.updated_at || 0);
-      if (newDate > existingDate) seen.set(key, t);
+      const existingDate = new Date(existing.updated_at || 0).getTime();
+      const newDate = new Date(t.updated_at || 0).getTime();
+      if (newDate > existingDate) {
+        seen.set(key, t);
+      }
     }
   }
   return Array.from(seen.values());
@@ -205,8 +213,17 @@ export default function App() {
             const current = prev[module] || [];
             if (payload.eventType === 'INSERT') {
               const newTicket = normalizeTicket(payload.new, module);
-              const key = newTicket.vin || newTicket.tracking_id || String(newTicket.id);
-              if (current.some((t) => (t.vin || t.tracking_id || String(t.id)) === key)) return prev;
+              // Use normalized VIN-based check for realtime insertion too
+              const normVin = String(newTicket.vin || '').trim().toUpperCase();
+              const normTrk = String(newTicket.tracking_id || '').trim().toUpperCase();
+              const key = normVin || normTrk || String(newTicket.id);
+              
+              if (current.some((t) => {
+                const tVin = String(t.vin || '').trim().toUpperCase();
+                const tTrk = String(t.tracking_id || '').trim().toUpperCase();
+                return (tVin || tTrk || String(t.id)) === key;
+              })) return prev;
+              
               return { ...prev, [module]: [newTicket, ...current] };
             }
             if (payload.eventType === 'UPDATE') {
