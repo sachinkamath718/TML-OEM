@@ -92,6 +92,17 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
           <div style={{ fontSize: 10, color: '#94A3B8', fontFamily: "'DM Mono', monospace", marginTop: 1, letterSpacing: 0.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {order.tracking_id || order.id}
           </div>
+          {(mod === 'AIS140' || mod === 'Mining') && order.sim_expiry_date && (
+            <div style={{
+              fontSize: 9, fontWeight: 700, marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4,
+              color: isSimExpired(order.sim_expiry_date) ? '#DC2626' : '#059669',
+              background: isSimExpired(order.sim_expiry_date) ? '#FEF2F2' : '#F0FDF4',
+              padding: '1px 6px', borderRadius: 4, border: `1px solid ${isSimExpired(order.sim_expiry_date) ? '#FECACA' : '#BBF7D0'}`
+            }}>
+              SIM: {new Date(order.sim_expiry_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+              {isSimExpired(order.sim_expiry_date) && ' ⚠'}
+            </div>
+          )}
         </div>
 
         {/* CTA buttons — hidden in bulk mode */}

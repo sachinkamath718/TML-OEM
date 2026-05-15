@@ -94,8 +94,17 @@ export default function App() {
     const STATUS_MAP = { in_progress: 'IN_PROGRESS', completed: 'COMPLETED', on_hold: 'ON_HOLD', cancelled: 'CANCELLED', cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST' };
     const statusStr = STATUS_MAP[rawStatus]; if (!statusStr) return;
     try {
-      if (activeModule === 'AIS140') await ais140RequestUpdate({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', updatedAt: new Date().toISOString() });
-      if (activeModule === 'Mining') await miningRequestUpdate({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', updatedAt: new Date().toISOString() });
+      const common = { 
+        vin: ticket.vin, 
+        ticketNo: ticket.ticket_no || ticket.mining_ticket_no, 
+        status: statusStr, 
+        remark: extraFields.remark || '', 
+        updatedAt: new Date().toISOString(),
+        certificateNumber: extraFields.certificate_number || null,
+        certificateFileName: extraFields.certificate_file_name || null
+      };
+      if (activeModule === 'AIS140') await ais140RequestUpdate(common);
+      if (activeModule === 'Mining') await miningRequestUpdate(common);
       if (activeModule === 'Installation' && rawStatus === 'completed') {
         await deviceFitmentWebhook({
           trackingId: ticket.tracking_id,

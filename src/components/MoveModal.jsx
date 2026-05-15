@@ -45,6 +45,10 @@ function getFieldType(module, fromStatus, toStatus) {
     if (fromStatus === 'Pending'      && toStatus === 'In Progress') return 'installation_sched';
     if (fromStatus === 'In Progress'  && toStatus === 'Completed')   return 'installation_done';
   }
+  if (module === 'AIS140' || module === 'Mining') {
+    if (fromStatus === 'Pending'      && toStatus === 'In Progress') return 'ais_mining_progress';
+    if (fromStatus === 'In Progress'  && toStatus === 'Completed')   return 'cert_upload';
+  }
   if (module === 'Orders') return 'orders';
   return 'none';
 }
@@ -80,6 +84,8 @@ export default function MoveModal({ order, module, onClose, onMove }) {
   const [technicianName,  setTechnicianName]  = useState('');
   const [scheduledDate,   setScheduledDate]   = useState('');
   const [deviceImei,      setDeviceImei]      = useState('');
+  const [certNumber,      setCertNumber]      = useState('');
+  const [certFileName,    setCertFileName]    = useState('');
 
   const fromStatus   = toDisplayStatus(order?.status);
   const validTargets = getValidTargets(module, fromStatus);
@@ -144,6 +150,15 @@ export default function MoveModal({ order, module, onClose, onMove }) {
       Object.assign(extraFields, {
         technician_name: technicianName.trim(),
         scheduled_date:  scheduledDate,
+      });
+    }
+
+    if (fieldType === 'cert_upload') {
+      if (!certNumber.trim())   return setError('Certificate Number is required.');
+      if (!certFileName.trim()) return setError('Certificate File Name/Link is required.');
+      Object.assign(extraFields, {
+        certificate_number: certNumber.trim(),
+        certificate_file_name: certFileName.trim(),
       });
     }
 
@@ -309,6 +324,24 @@ export default function MoveModal({ order, module, onClose, onMove }) {
             <div style={{ fontSize: 11, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px' }}>
               ⚠️ <strong>Verification:</strong> This will trigger the DEVICE_INSTALLED webhook and verify connectivity via FleetEdge.
             </div>
+          </div>
+        )}
+
+        {/* ── AIS140 / Mining: Pending → In Progress ──────────────────────────── */}
+        {fieldType === 'ais_mining_progress' && (
+          <div style={{ fontSize: 12, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+            📑 Moving to In Progress will notify TML via webhook.
+          </div>
+        )}
+
+        {/* ── AIS140 / Mining: In Progress → Completed ─────────────────────────── */}
+        {fieldType === 'cert_upload' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '8px 12px' }}>
+              📜 Upload generated certificates
+            </div>
+            <div>{lbl('Certificate Number', true)}<input value={certNumber} onChange={e => setCertNumber(e.target.value)} placeholder="e.g. AIS-CERT-12345" style={inp} /></div>
+            <div>{lbl('Certificate File Name / Link', true)}<input value={certFileName} onChange={e => setCertFileName(e.target.value)} placeholder="e.g. certificate_v1.pdf" style={inp} /></div>
           </div>
         )}
 
