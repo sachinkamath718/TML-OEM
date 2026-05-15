@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.15.9 - Ultimate Ghost-Render Kill
+// Build Version: 2026.05.15.10 - Installation Workflow Implementation
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 import { generateId } from './utils';
 import Sidebar from './components/Sidebar';
@@ -17,6 +17,11 @@ const MODULE_STAGE = { Orders: 'order', Shipment: 'shipment', Delivery: 'deliver
 function normalizeTicket(t, mod) {
   const map = { pending:'Pending', in_progress:'In Progress', completed:'Completed', on_hold:'On Hold', failed:'Failed', cancelled:'Cancelled', cancelled_due_to_change_request:'Cancelled Due To Change Request' };
   return { ...t, _module:mod, _table:MODULE_TABLE[mod], status: map[t.status] || t.status || 'Pending', _rawStatus: t.status };
+}
+
+function displayToRaw(display) {
+  const map = { 'Pending':'pending', 'In Progress':'in_progress', 'Completed':'completed', 'On Hold':'on_hold', 'Failed':'failed', 'Cancelled':'cancelled', 'Cancelled Due To Change Request':'cancelled_due_to_change_request' };
+  return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
 function dedup(list) {
@@ -71,7 +76,44 @@ export default function App() {
     return () => { isCurrent = false; supabase.removeChannel(channel); };
   }, [activeModule, fetchModule]);
 
-  // DERIVE DATA INLINE TO PREVENT SYNC ISSUES
+  async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
+    const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
+    if (!orderId) return;
+    await supabase.from('order_status_history').insert({
+      ticket_id: ticket.ticket_no || ticket.mining_ticket_no || String(ticket.id),
+      module: activeModule,
+      vin: ticket.vin || null,
+      from_status: fromRaw || null,
+      to_status: toRaw,
+      notes: extra.notes || null,
+      metadata: extra.metadata || null
+    });
+  }
+
+  async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
+    const STATUS_MAP = { in_progress: 'IN_PROGRESS', completed: 'COMPLETED', on_hold: 'ON_HOLD', cancelled: 'CANCELLED', cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST' };
+    const statusStr = STATUS_MAP[rawStatus]; if (!statusStr) return;
+    try {
+      if (activeModule === 'AIS140') await ais140RequestUpdate({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', updatedAt: new Date().toISOString() });
+      if (activeModule === 'Mining') await miningRequestUpdate({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', updatedAt: new Date().toISOString() });
+      if (activeModule === 'Installation' && rawStatus === 'completed') {
+        await deviceFitmentWebhook({
+          trackingId: ticket.tracking_id,
+          vin: ticket.vin,
+          stage: 'DEVICE_INSTALLED',
+          updatedAt: new Date().toISOString(),
+          metadata: {
+            imei: extraFields.device_imei || ticket.device_imei,
+            technicianName: extraFields.technician_name || ticket.technician_name,
+            remarks: extraFields.remark || ''
+          }
+        });
+      }
+      if (activeModule === 'Shipment' && rawStatus === 'in_progress') await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } });
+      if (activeModule === 'Delivery' && rawStatus === 'completed') await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } });
+    } catch (e) { console.warn('Webhook failed', e); }
+  }
+
   const allTicketsForMod = ticketMap[activeModule] || [];
   const uniqueTickets    = dedup(allTicketsForMod);
   const filtered         = uniqueTickets.filter(t => {
@@ -89,7 +131,7 @@ export default function App() {
         <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 15 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{activeModule}</div>
-            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 9</div>
+            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 10</div>
           </div>
           <div style={{ flex: 1 }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0' }} />
@@ -116,11 +158,19 @@ export default function App() {
       </div>
       {detailOrder && <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={o => { setMoveTarget(o); setDetailOrder(null); }} />}
       {moveTarget && <MoveModal order={moveTarget} module={activeModule} onClose={() => setMoveTarget(null)} onMove={async (d) => {
-        const raw = d.targetCol.toLowerCase().replace(/ /g, '_');
-        await supabase.from(moveTarget._table).update({ status: raw, updated_at: new Date().toISOString() }).eq('id', moveTarget.id);
-        load(activeModule);
+        const raw = displayToRaw(d.targetCol);
+        const ticket = uniqueTickets.find(t => t.id === moveTarget.id);
+        if (!ticket) return;
+        try {
+          await supabase.from(moveTarget._table).update({ status: raw, updated_at: new Date().toISOString(), ...d.extraFields }).eq('id', moveTarget.id);
+          await writeHistory(ticket, ticket._rawStatus, raw, { notes: d.notes, metadata: d.extraFields });
+          await fireOutboundWebhook(ticket, raw, d.extraFields);
+          load(activeModule);
+        } catch (err) { alert('Failed: ' + err.message); }
         setMoveTarget(null);
       }} />}
+      {detailOrder && <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }} />}
+      {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)} onCreated={() => setShowNewOrder(false)} />}
     </div>
   );
 }

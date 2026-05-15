@@ -141,15 +141,18 @@ export default function MoveModal({ order, module, onClose, onMove }) {
     if (fieldType === 'installation_sched') {
       if (!technicianName.trim()) return setError('Technician name is required.');
       if (!scheduledDate)         return setError('Scheduled date is required.');
-      if (!deviceImei.trim())     return setError('Device IMEI is required.');
       Object.assign(extraFields, {
         technician_name: technicianName.trim(),
         scheduled_date:  scheduledDate,
-        device_imei:     deviceImei.trim(),
       });
     }
 
-    // installation_done: no required fields, just proceed (device status is a warning)
+    if (fieldType === 'installation_done') {
+      if (!deviceImei.trim())     return setError('Device IMEI is required.');
+      Object.assign(extraFields, {
+        device_imei:     deviceImei.trim(),
+      });
+    }
 
     if (fieldType === 'orders' && remarks.trim()) {
       extraFields.metadata = { ...(order?.metadata || {}), remarks: remarks.trim() };
@@ -289,22 +292,22 @@ export default function MoveModal({ order, module, onClose, onMove }) {
         {fieldType === 'installation_sched' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: '#7C3AED', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: 8, padding: '8px 12px' }}>
-              🔧 Schedule installation — enter technician and device details
+              🔧 Assign technician and schedule installation
             </div>
             <div>{lbl('Technician Name', true)}<input value={technicianName} onChange={e => setTechnicianName(e.target.value)} placeholder="e.g. Rajesh Kumar" style={inp} /></div>
             <div>{lbl('Scheduled Date', true)}<input type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} style={inp} /></div>
-            <div>{lbl('Device IMEI', true)}<input value={deviceImei} onChange={e => setDeviceImei(e.target.value)} placeholder="e.g. 356938035651001" style={inp} /></div>
           </div>
         )}
 
-        {/* ── Installation: In Progress → Completed — device status warning ──────── */}
+        {/* ── Installation: In Progress → Completed ─────────────────────────────── */}
         {fieldType === 'installation_done' && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}>
-              ⚠️ <strong>Warning:</strong> Device status will be checked via FleetEdge API. If telemetry data is not yet received, installation may be incomplete. You can still proceed.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#166534', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '8px 12px' }}>
+              ✅ Installation complete — enter device details
             </div>
-            <div style={{ fontSize: 11, color: '#64748B', background: '#F8FAFC', borderRadius: 8, padding: '8px 12px' }}>
-              Use the <strong>DS</strong> button on the ticket card to check live device status before marking complete.
+            <div>{lbl('Device IMEI', true)}<input value={deviceImei} onChange={e => setDeviceImei(e.target.value)} placeholder="e.g. 356938035651001" style={inp} /></div>
+            <div style={{ fontSize: 11, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px' }}>
+              ⚠️ <strong>Verification:</strong> This will trigger the DEVICE_INSTALLED webhook and verify connectivity via FleetEdge.
             </div>
           </div>
         )}
