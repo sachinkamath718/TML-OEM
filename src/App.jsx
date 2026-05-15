@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.14.7 - Single-ticket move fix, updated_at, CVP API
+// Build Version: 2026.05.14.8 - Flat order_vehicles query, no join fan-out duplication
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -71,13 +71,13 @@ function displayToRaw(display) {
 }
 
 // ─── Strict dedup ────────────────────────────────────────────────────────────
-// Orders: key = _vehicle_tracking_id (unique per vehicle row, never collides)
-// All others: key = id (each ticket has its own row)
+// Orders: key = _vehicle_tracking_id (one row per vehicle, never collides)
+// All others: key = id
 function dedupTickets(tickets, module) {
   const seen = new Map();
   for (const t of tickets) {
     const key = module === 'Orders'
-      ? String(t._vehicle_tracking_id || t.tracking_id || `${t.id}-${t.vin || ''}`)
+      ? String(t._vehicle_tracking_id || `${t.id}-${t.vin || ''}`)
       : String(t.id);
     if (!seen.has(key)) seen.set(key, t);
   }
@@ -107,43 +107,44 @@ export default function App() {
   // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
     if (module === 'Orders') {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, order_vehicles(vin, registration_no, model, make, engine_no, fuel_type, emission_type, mfg_year, rto_office_code, rto_state, tracking_id, status, updated_at)')
+      // Query order_vehicles directly (flat rows) and join orders as a lookup.
+      // Previously we queried orders + nested order_vehicles — that one-to-many join
+      // fan-out, combined with concurrent realtime refetches, produced duplicate rows.
+      // Querying the child table directly gives one row per vehicle, no fan-out possible.
+      const { data: vehicles, error: vErr } = await supabase
+        .from('order_vehicles')
+        .select('*, orders(id, order_number, customer_name, created_at, created_by, tracking_id, status)')
         .order('created_at', { ascending: false });
-      if (error) throw error;
+      if (vErr) throw vErr;
 
-      const rows = [];
-      for (const order of data || []) {
-        const vehicles = order.order_vehicles || [];
-        if (vehicles.length === 0) {
-          rows.push(normalizeTicket({ ...order, order_vehicles: undefined }, module));
-        } else {
-          for (const v of vehicles) {
-            rows.push(normalizeTicket({
-              ...order,
-              // Per-vehicle status from order_vehicles — NOT the parent order status
-              status:          v.status || order.status,
-              updated_at:      v.updated_at || order.updated_at,
-              vin:             v.vin,
-              registration_no: v.registration_no,
-              model:           v.model,
-              make:            v.make,
-              engine_no:       v.engine_no,
-              fuel_type:       v.fuel_type,
-              emission_type:   v.emission_type,
-              mfg_year:        v.mfg_year,
-              rto_office_code: v.rto_office_code,
-              rto_state:       v.rto_state,
-              tracking_id:     v.tracking_id || order.tracking_id,
-              // Keep the vehicle row's own identity for targeted updates
-              _vehicle_tracking_id: v.tracking_id,
-              order_vehicles:  undefined,
-            }, module));
-          }
-        }
-      }
-      // Dedup before returning — DB join can produce dupes if called in rapid succession
+      const rows = (vehicles || []).map((v) => {
+        const order = v.orders || {};
+        return normalizeTicket({
+          // Order-level fields
+          id:              order.id,
+          order_number:    order.order_number,
+          customer_name:   order.customer_name,
+          created_at:      v.created_at || order.created_at,
+          created_by:      order.created_by,
+          // Per-vehicle identity
+          _vehicle_tracking_id: v.tracking_id,
+          tracking_id:     v.tracking_id || order.tracking_id,
+          vin:             v.vin,
+          registration_no: v.registration_no,
+          model:           v.model,
+          make:            v.make,
+          engine_no:       v.engine_no,
+          fuel_type:       v.fuel_type,
+          emission_type:   v.emission_type,
+          mfg_year:        v.mfg_year,
+          rto_office_code: v.rto_office_code,
+          rto_state:       v.rto_state,
+          // Per-vehicle status wins over order-level status
+          status:          v.status || order.status,
+          updated_at:      v.updated_at || order.updated_at,
+        }, module);
+      });
+
       return dedupTickets(rows, 'Orders');
     }
 
@@ -187,10 +188,9 @@ export default function App() {
     const module = activeModule;
     const table  = MODULE_TABLE[module];
 
-    // For Orders we need to watch both tables:
-    //   • 'orders'         — new orders inserted
-    //   • 'order_vehicles' — per-vehicle status updates
-    // We debounce the re-fetch so rapid-fire events don't cause double-replace.
+    // For Orders we watch order_vehicles only (the source of truth for per-vehicle status).
+    // Previously we also watched the orders table, which doubled the refetch triggers.
+    // Now: one channel, one debounced refetch.
     if (module === 'Orders') {
       let debounceTimer = null;
       const scheduleRefetch = () => {
@@ -202,20 +202,16 @@ export default function App() {
             if (!isCurrent) return;
             setTicketMap((prev) => ({ ...prev, Orders: rows }));
           });
-        }, 150); // 150 ms debounce — collapses burst events into one fetch
+        }, 200);
       };
 
-      const ordersChannel = supabase
-        .channel(`rt-orders-${Date.now()}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefetch)
-        .subscribe();
-
+      // Only one channel now — order_vehicles is the canonical table for Orders view
       const vehiclesChannel = supabase
         .channel(`rt-order_vehicles-${Date.now()}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'order_vehicles' }, scheduleRefetch)
         .subscribe();
 
-      channels.push(ordersChannel, vehiclesChannel);
+      channels.push(vehiclesChannel);
 
       return () => {
         isCurrent = false;
@@ -346,7 +342,6 @@ export default function App() {
   }
 
   // ─── Fire outbound webhook via CVP client ─────────────────────────────────
-  // All calls are non-blocking (fire-and-forget with logged errors).
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
     const STATUS_MAP = {
       in_progress:                     'IN_PROGRESS',
@@ -358,7 +353,6 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    // Use the actual DB updated_at if present, else now — never use created_at
     const updatedAt = ticket.updated_at
       ? new Date(ticket.updated_at).toISOString()
       : new Date().toISOString();
@@ -446,8 +440,6 @@ export default function App() {
   }
 
   // ─── Per-module allowlist of actual DB columns (beyond `status`) ──────────
-  // Only these keys from extraFields are written to the database.
-  // Everything else is webhook-only and must NOT be sent to Supabase.
   const MODULE_DB_FIELDS = {
     Orders:       [],
     Shipment:     ['courier', 'awb_number', 'expected_delivery', 'icc_id'],
@@ -461,8 +453,6 @@ export default function App() {
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
 
-    // For Orders module, rows are flattened by vehicle — match on id+vin
-    // For all other modules, each ticket has its own unique id
     const ticket = activeModule === 'Orders'
       ? tickets.find((t) => t.id === moveTarget.id && t.vin === moveTarget.vin)
       : tickets.find((t) => t.id === moveTarget.id);
@@ -472,25 +462,19 @@ export default function App() {
     const allowedCols = MODULE_DB_FIELDS[activeModule] || [];
     const now         = new Date().toISOString();
 
-    // Only whitelisted columns go to Supabase; everything else is webhook-only
-    const dbFields = Object.fromEntries(
-      Object.entries(extraFields).filter(([k]) => allowedCols.includes(k))
-    );
+    const dbFields      = Object.fromEntries(Object.entries(extraFields).filter(([k]) => allowedCols.includes(k)));
     const webhookFields = { ...extraFields };
 
     try {
       let updateErr;
 
       if (activeModule === 'Orders') {
-        // Orders: update the specific vehicle row in order_vehicles by its tracking_id
-        // This ensures only ONE vehicle row moves, not all vehicles in the same order
         const vehicleTrackingId = ticket._vehicle_tracking_id || ticket.tracking_id;
         ({ error: updateErr } = await supabase
           .from('order_vehicles')
           .update({ status: rawStatus, updated_at: now })
           .eq('tracking_id', vehicleTrackingId));
       } else {
-        // All other modules: each ticket has a unique id — update exactly that row
         ({ error: updateErr } = await supabase
           .from(ticket._table)
           .update({ status: rawStatus, updated_at: now, ...dbFields })
@@ -498,13 +482,11 @@ export default function App() {
       }
       if (updateErr) throw updateErr;
 
-      // Attach the fresh updated_at so the webhook uses the DB-stamped time
       const ticketWithTime = { ...ticket, updated_at: now };
 
       await writeHistory(ticketWithTime, ticket._rawStatus, rawStatus, { notes });
       fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
 
-      // Full-replace after write — dedupTickets handles any residual dupes
       const fresh = await fetchModule(activeModule);
       setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
 
@@ -541,7 +523,6 @@ export default function App() {
         await writeHistory({ ...ticket, updated_at: now }, ticket._rawStatus, rawStatus);
       }));
 
-      // Full-replace after all writes
       const fresh = await fetchModule(activeModule);
       setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
 
