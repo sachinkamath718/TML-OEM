@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-// Build Version: 2026.05.14.3 - Force Redeploy
+import { useState, useEffect, useCallback, useRef } from 'react';
+// Build Version: 2026.05.15.1 - VIN-Strict Dedup & Clean Realtime
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -12,6 +12,11 @@ import BulkMoveModal from './components/BulkMoveModal';
 import NewOrderModal from './components/NewOrderModal';
 
 import { supabase } from './supabaseClient';
+import {
+  deviceFitmentWebhook,
+  ais140RequestUpdate,
+  miningRequestUpdate,
+} from './cvpClient';
 
 const MODULE_TABLE = {
   Orders:       'orders',
@@ -38,10 +43,8 @@ function normalizeTicket(ticket, module) {
     completed:                         'Completed',
     on_hold:                           'On Hold',
     failed:                            'Failed',
-    // AIS140 / Mining specific
     cancelled:                         'Cancelled',
     cancelled_due_to_change_request:   'Cancelled Due To Change Request',
-    // Also handle if DB sends display strings directly
     'Cancelled':                       'Cancelled',
     'Cancelled Due To Change Request': 'Cancelled Due To Change Request',
   };
@@ -67,11 +70,39 @@ function displayToRaw(display) {
   return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
+// ─── Strict dedup ────────────────────────────────────────────────────────────
+// Ensure each vehicle appears only once per module.
+// Orders: key = id + vin (to allow multiple vehicles in one order)
+// Others: key = vin (fallback to id)
+function dedupTickets(tickets, module) {
+  if (!tickets || tickets.length === 0) return [];
+  const seen = new Map();
+  for (const t of tickets) {
+    let key;
+    if (module === 'Orders') {
+      key = `${t.id}-${t.vin || t.tracking_id || ''}`;
+    } else {
+      key = t.vin || t.tracking_id || String(t.id);
+    }
+    
+    if (!seen.has(key)) {
+      seen.set(key, t);
+    } else {
+      // If we see the same car twice, keep the one with the latest update
+      const existing = seen.get(key);
+      const existingDate = new Date(existing.updated_at || 0);
+      const newDate = new Date(t.updated_at || 0);
+      if (newDate > existingDate) seen.set(key, t);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 export default function App() {
-  const [allTickets, setAllTickets]     = useState({});
-  const [loadedMods, setLoadedMods]     = useState({});
+  const [ticketMap, setTicketMap]       = useState({});
   const [activeModule, setActiveModule] = useState('Orders');
   const [loading, setLoading]           = useState(true);
+  const [switchLoading, setSwitchLoading] = useState(false);
   const [error, setError]               = useState(null);
 
   const [moveTarget, setMoveTarget]     = useState(null);
@@ -82,152 +113,162 @@ export default function App() {
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [search, setSearch]             = useState('');
 
+  const activeModuleRef = useRef(activeModule);
+  useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
+
   // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
-    // Orders: join order_vehicles to get VINs and vehicle details
     if (module === 'Orders') {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, order_vehicles(vin, registration_no, model, make, engine_no, fuel_type, emission_type, mfg_year, rto_office_code, rto_state, tracking_id)')
+      const { data: vehicles, error: vErr } = await supabase
+        .from('order_vehicles')
+        .select('*, orders(id, order_number, created_at, created_by, tracking_id, status)')
         .order('created_at', { ascending: false });
-      if (error) throw error;
+      if (vErr) throw vErr;
 
-      const rows = [];
-      for (const order of data || []) {
-        const vehicles = order.order_vehicles || [];
-        if (vehicles.length === 0) {
-          rows.push(normalizeTicket({ ...order, order_vehicles: undefined }, module));
-        } else {
-          for (const v of vehicles) {
-            rows.push(normalizeTicket({
-              ...order,
-              vin:             v.vin,
-              registration_no: v.registration_no,
-              model:           v.model,
-              make:            v.make,
-              engine_no:       v.engine_no,
-              fuel_type:       v.fuel_type,
-              emission_type:   v.emission_type,
-              mfg_year:        v.mfg_year,
-              rto_office_code: v.rto_office_code,
-              rto_state:       v.rto_state,
-              tracking_id:     v.tracking_id || order.tracking_id,
-              order_vehicles:  undefined,
-            }, module));
-          }
-        }
-      }
-      return rows;
+      const rows = (vehicles || []).map((v) => {
+        const order = v.orders || {};
+        return normalizeTicket({
+          id:              order.id,
+          order_number:    order.order_number,
+          created_at:      v.created_at || order.created_at,
+          created_by:      order.created_by,
+          _vehicle_tracking_id: v.tracking_id,
+          tracking_id:     v.tracking_id || order.tracking_id,
+          vin:             v.vin,
+          registration_no: v.registration_no,
+          model:           v.model,
+          make:            v.make,
+          engine_no:       v.engine_no,
+          fuel_type:       v.fuel_type,
+          emission_type:   v.emission_type,
+          mfg_year:        v.mfg_year,
+          rto_office_code: v.rto_office_code,
+          rto_state:       v.rto_state,
+          status:          v.status || order.status,
+          updated_at:      v.updated_at || order.updated_at,
+        }, module);
+      });
+
+      return dedupTickets(rows, 'Orders');
     }
 
-    // All other modules
     const table = MODULE_TABLE[module];
     const { data, error } = await supabase
       .from(table)
       .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return (data || []).map((t) => normalizeTicket(t, module));
+    return dedupTickets((data || []).map((t) => normalizeTicket(t, module)), module);
   }, []);
 
-  // ─── Initial load ─────────────────────────────────────────────────────────
+  const loadModule = useCallback(async (module) => {
+    const rows = await fetchModule(module);
+    setTicketMap((prev) => ({ ...prev, [module]: rows }));
+    return rows;
+  }, [fetchModule]);
+
   useEffect(() => {
     async function init() {
       setLoading(true);
       setError(null);
       try {
-        const first = await fetchModule(activeModule);
-        setAllTickets((prev) => ({ ...prev, [activeModule]: first }));
-        setLoadedMods((prev) => ({ ...prev, [activeModule]: true }));
-        setLoading(false);
-
-        const rest = MODULES.filter((m) => m !== activeModule);
-        for (const mod of rest) {
-          try {
-            const tickets = await fetchModule(mod);
-            setAllTickets((prev) => ({ ...prev, [mod]: tickets }));
-            setLoadedMods((prev) => ({ ...prev, [mod]: true }));
-          } catch (_) {}
-        }
+        await loadModule(activeModule);
       } catch (err) {
         setError('Failed to load: ' + err.message);
-        setLoading(false);
       }
+      setLoading(false);
     }
     init();
   }, []); // eslint-disable-line
 
-  // ─── Realtime ─────────────────────────────────────────────────────────────
+  // ─── Realtime subscriptions ───────────────────────────────────────────────
   useEffect(() => {
-    const activeChannels = [];
+    let isCurrent = true;
+    const channels = [];
+    const module = activeModule;
+    const table  = MODULE_TABLE[module];
 
-    const setupRealtime = () => {
-      MODULES.forEach((module) => {
-        const table = MODULE_TABLE[module];
-        const channel = supabase
-          .channel(`${table}-rt-${module}`) // Unique channel name per module
-          .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
-            // For Orders module, re-fetch to get joined vehicle data (flattened)
-            if (module === 'Orders') {
-              fetchModule('Orders').then((rows) => {
-                setAllTickets((prev) => ({ ...prev, Orders: rows }));
-              });
-              return;
+    if (module === 'Orders') {
+      let debounceTimer = null;
+      const scheduleRefetch = () => {
+        if (!isCurrent) return;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!isCurrent) return;
+          fetchModule('Orders').then((rows) => {
+            if (!isCurrent && isCurrent) return; // double check
+            setTicketMap((prev) => ({ ...prev, Orders: rows }));
+          });
+        }, 250);
+      };
+
+      const vehiclesChannel = supabase
+        .channel(`rt-order_vehicles-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'order_vehicles' }, scheduleRefetch)
+        .subscribe();
+
+      channels.push(vehiclesChannel);
+    } else {
+      const channel = supabase
+        .channel(`rt-${module}-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, (payload) => {
+          if (!isCurrent) return;
+          if (activeModuleRef.current !== module) return;
+
+          setTicketMap((prev) => {
+            const current = prev[module] || [];
+            if (payload.eventType === 'INSERT') {
+              const newTicket = normalizeTicket(payload.new, module);
+              // Use VIN-based check for realtime insertion too
+              const key = newTicket.vin || newTicket.tracking_id || String(newTicket.id);
+              if (current.some((t) => (t.vin || t.tracking_id || String(t.id)) === key)) return prev;
+              return { ...prev, [module]: [newTicket, ...current] };
             }
-
-            setAllTickets((prev) => {
-              const current = prev[module] || [];
-              if (payload.eventType === 'INSERT') {
-                const newTicket = normalizeTicket(payload.new, module);
-                // Deduplicate: check if ID already exists
-                if (current.some((t) => t.id === newTicket.id)) return prev;
-                return { ...prev, [module]: [newTicket, ...current] };
-              } 
-              
-              if (payload.eventType === 'UPDATE') {
-                const updatedTicket = normalizeTicket(payload.new, module);
-                return {
-                  ...prev,
-                  [module]: current.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)),
-                };
-              } 
-              
-              if (payload.eventType === 'DELETE') {
-                return {
-                  ...prev,
-                  [module]: current.filter((t) => t.id !== payload.old.id),
-                };
-              }
-              return prev;
-            });
 
             if (payload.eventType === 'UPDATE') {
-              setDetailOrder((prev) =>
-                prev?.id === payload.new.id ? normalizeTicket(payload.new, module) : prev
-              );
+              const updated = normalizeTicket(payload.new, module);
+              return {
+                ...prev,
+                [module]: current.map((t) =>
+                  String(t.id) === String(updated.id) ? updated : t
+                ),
+              };
             }
-          })
-          .subscribe();
-        
-        activeChannels.push(channel);
-      });
-    };
 
-    setupRealtime();
+            if (payload.eventType === 'DELETE') {
+              return {
+                ...prev,
+                [module]: current.filter((t) => String(t.id) !== String(payload.old.id)),
+              };
+            }
+            return prev;
+          });
+        })
+        .subscribe();
+      channels.push(channel);
+    }
 
     return () => {
-      activeChannels.forEach((channel) => {
-        supabase.removeChannel(channel);
-      });
+      isCurrent = false;
+      channels.forEach((ch) => supabase.removeChannel(ch));
     };
-  }, [fetchModule]);
+  }, [activeModule, fetchModule]);
 
-  // ─── Active tickets ───────────────────────────────────────────────────────
-  // Deduplicate tickets by a composite key to prevent duplicates while allowing flattened vehicles
-  const rawTickets = allTickets[activeModule] || [];
-  const tickets = Array.from(
-    new Map(rawTickets.map((t) => [`${t.id}-${t.vin || ''}`, t])).values()
-  );
+  const handleModuleSwitch = useCallback(async (mod) => {
+    if (mod === activeModule) return;
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    setSearch('');
+    setActiveModule(mod);
+    setSwitchLoading(true);
+    try {
+      await loadModule(mod);
+    } catch (_) {}
+    setSwitchLoading(false);
+  }, [activeModule, loadModule]);
+
+  const rawTickets      = ticketMap[activeModule] || [];
+  const tickets         = dedupTickets(rawTickets, activeModule);
 
   const filteredTickets = tickets.filter((t) => {
     if (!search.trim()) return true;
@@ -237,7 +278,6 @@ export default function App() {
       .some((f) => f.toLowerCase().includes(q));
   });
 
-  // ─── Selection helpers ────────────────────────────────────────────────────
   function toggleSelect(id) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -257,17 +297,10 @@ export default function App() {
     setBulkMode(false);
   }
 
-  // ─── Write history row ────────────────────────────────────────────────────
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
-    // For Orders module the ticket IS the order, so use ticket.id as order_id
     const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
-
-    if (!orderId) {
-      console.warn('No order_id found for history write, skipping.');
-      return;
-    }
-
-    const { error } = await supabase.from('order_status_history').insert({
+    if (!orderId) return;
+    await supabase.from('order_status_history').insert({
       order_id:    orderId,
       vin:         ticket.vin       || null,
       stage:       MODULE_STAGE[activeModule],
@@ -275,229 +308,78 @@ export default function App() {
       to_status:   toRaw,
       changed_by:  extra.changed_by || null,
       notes:       extra.notes      || null,
-      metadata:    extra.metadata   || null,
     });
-    if (error) console.warn('History write failed:', error.message);
   }
 
-  // ─── Fire outbound webhook to TML ─────────────────────────────────────────
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
-    const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
     const STATUS_MAP = {
       in_progress: 'IN_PROGRESS', completed: 'COMPLETED',
       on_hold: 'ON_HOLD', cancelled: 'CANCELLED',
       cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST',
     };
     const statusStr = STATUS_MAP[rawStatus];
-    if (!statusStr) return; // don't fire for pending
+    if (!statusStr) return;
 
     try {
       if (activeModule === 'AIS140') {
-        await fetch(`${apiBase}/webhooks/v2/ais140-requests`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            vin:       ticket.vin,
-            ticketNo:  ticket.ticket_no,
-            status:    statusStr,
-            remark:    extraFields.remark || '',
-            handler:   extraFields.handler || '',
-            handlerContact: extraFields.handler_contact || '',
-            updatedAt: new Date().toISOString(),
-            metadata:  {},
-          }),
-        });
-        console.log(`[outbound] AIS140 webhook fired: ${ticket.ticket_no} → ${statusStr}`);
+        await ais140RequestUpdate({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() });
       }
-
       if (activeModule === 'Mining') {
-        await fetch(`${apiBase}/webhooks/mining-requests`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            vin:       ticket.vin,
-            ticketNo:  ticket.mining_ticket_no || ticket.ticket_no,
-            status:    statusStr,
-            remark:    extraFields.remark || '',
-            handler:   extraFields.handler || '',
-            handlerContact: extraFields.handler_contact || '',
-            updatedAt: new Date().toISOString(),
-            metadata:  {},
-          }),
-        });
-        console.log(`[outbound] Mining webhook fired: ${ticket.mining_ticket_no} → ${statusStr}`);
+        await miningRequestUpdate({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() });
       }
-
       if (activeModule === 'Installation' && rawStatus === 'completed') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'DEVICE_INSTALLED',
-            updatedAt:  new Date().toISOString(),
-            meta: {
-              technicianName:  extraFields.technician_name || '',
-              installationDate: extraFields.scheduled_date || '',
-              remarks:         extraFields.remark || 'Marked completed from Kanban',
-            },
-          }),
-        });
-        console.log(`[outbound] DEVICE_INSTALLED webhook fired: ${ticket.tracking_id}`);
+        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), metadata: { technicianName: extraFields.technician_name || '', installationDate: extraFields.scheduled_date || '', remarks: extraFields.remark || '' } });
       }
-
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'TCU_SHIPPED',
-            updatedAt:  new Date().toISOString(),
-            meta: {
-              iccId:                 extraFields.iccid || '',
-              courier:               extraFields.courier || '',
-              courierTrackingNumber: extraFields.awb_number || '',
-              expectedDelivery:      extraFields.expected_delivery || '',
-            },
-          }),
-        });
-        console.log(`[outbound] TCU_SHIPPED webhook fired: ${ticket.tracking_id}`);
+        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } });
       }
-
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trackingId: ticket.tracking_id,
-            vin:        ticket.vin,
-            stage:      'TCU_DELIVERED',
-            updatedAt:  new Date().toISOString(),
-            meta: { remarks: `Delivered to ${extraFields.delivered_to || ''}` },
-          }),
-        });
-        console.log(`[outbound] TCU_DELIVERED webhook fired: ${ticket.tracking_id}`);
+        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } });
       }
-    } catch (webhookErr) {
-      // Non-blocking — log but don't fail the move
-      console.warn('[outbound] Webhook fire failed (non-blocking):', webhookErr.message);
-    }
+    } catch (e) { console.warn('Webhook failed', e); }
   }
 
-  // ─── Single move ──────────────────────────────────────────────────────────
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
-    const ticket = tickets.find((t) => t.id === moveTarget.id);
+    const ticket = tickets.find((t) => activeModule === 'Orders' ? (t.id === moveTarget.id && t.vin === moveTarget.vin) : (t.id === moveTarget.id));
     if (!ticket) return;
 
     const rawStatus = displayToRaw(targetCol);
-
-    const safeExtra = { ...extraFields };
-    delete safeExtra.changed_by;
-    delete safeExtra.notes;
-
     try {
-      const updatePayload = { status: rawStatus, ...safeExtra };
-
-      const { error: updateErr } = await supabase
-        .from(ticket._table)
-        .update(updatePayload)
-        .eq('id', ticket.id);
-      if (updateErr) throw updateErr;
-
-      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
-      // Fire outbound webhook to TML (non-blocking)
-      fireOutboundWebhook(ticket, rawStatus, safeExtra);
-
-      // For Orders, re-fetch to keep VIN join in sync
       if (activeModule === 'Orders') {
-        const fresh = await fetchModule('Orders');
-        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
-        setDetailOrder((prev) => {
-          if (!prev || prev.id !== ticket.id) return prev;
-          const updated = fresh.find((t) => t.id === ticket.id);
-          return updated || { ...prev, status: targetCol, _rawStatus: rawStatus };
-        });
+        await supabase.from('order_vehicles').update({ status: rawStatus, updated_at: new Date().toISOString() }).eq('tracking_id', ticket.tracking_id);
       } else {
-        setAllTickets((prev) => ({
-          ...prev,
-          [activeModule]: (prev[activeModule] || []).map((t) =>
-            t.id === ticket.id
-              ? { ...t, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-              : t
-          ),
-        }));
-        setDetailOrder((prev) =>
-          prev?.id === ticket.id
-            ? { ...prev, status: targetCol, _rawStatus: rawStatus, ...safeExtra }
-            : prev
-        );
+        await supabase.from(ticket._table).update({ status: rawStatus, updated_at: new Date().toISOString(), ...extraFields }).eq('id', ticket.id);
       }
-    } catch (err) {
-      alert('Failed to update: ' + err.message);
-    }
+      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
+      fireOutboundWebhook(ticket, rawStatus, extraFields);
+      await loadModule(activeModule);
+    } catch (err) { alert('Failed: ' + err.message); }
     setMoveTarget(null);
   }
 
-  // ─── Bulk move ────────────────────────────────────────────────────────────
   async function handleBulkMove({ targetCol }) {
-    const ids       = [...selectedIds];
     const rawStatus = displayToRaw(targetCol);
-
     try {
-      await Promise.all(ids.map(async (id) => {
+      await Promise.all([...selectedIds].map(async (id) => {
         const ticket = tickets.find((t) => t.id === id);
         if (!ticket) return;
-        const { error: updateErr } = await supabase
-          .from(ticket._table)
-          .update({ status: rawStatus })
-          .eq('id', id);
-        if (updateErr) throw updateErr;
+        await supabase.from(ticket._table).update({ status: rawStatus, updated_at: new Date().toISOString() }).eq('id', id);
         await writeHistory(ticket, ticket._rawStatus, rawStatus);
       }));
-
-      if (activeModule === 'Orders') {
-        const fresh = await fetchModule('Orders');
-        setAllTickets((prev) => ({ ...prev, Orders: fresh }));
-      } else {
-        setAllTickets((prev) => ({
-          ...prev,
-          [activeModule]: (prev[activeModule] || []).map((t) =>
-            selectedIds.has(t.id) ? { ...t, status: targetCol, _rawStatus: rawStatus } : t
-          ),
-        }));
-      }
+      await loadModule(activeModule);
       exitBulkMode();
       setShowBulkMove(false);
-    } catch (err) {
-      alert('Bulk update failed: ' + err.message);
-    }
+    } catch (err) { alert('Bulk failed: ' + err.message); }
   }
 
-  // ─── Create order (simple VIN-only flow) ─────────────────────────────────
-  async function handleCreate(orderPayload, vehicleRows, spocRow) {
+  async function handleCreate(orderPayload, vehicleRows) {
     try {
-      const { data: orderData, error: orderErr } = await supabase
-        .from('orders')
-        .insert({ ...orderPayload, tracking_id: 'TRK-' + generateId(), created_by: 'system' })
-        .select()
-        .single();
+      const { data: orderData, error: orderErr } = await supabase.from('orders').insert({ ...orderPayload, tracking_id: 'TRK-' + generateId(), created_by: 'system' }).select().single();
       if (orderErr) throw orderErr;
-
       for (const v of vehicleRows) {
         const trackingId = 'TRK-' + generateId();
-
-        await supabase.from('order_vehicles').insert({
-          order_id:    orderData.id,
-          vin:         v.vin,
-          ticket_id:   'TKT-' + generateId(),
-          tracking_id: trackingId,
-          status:      'pending',
-        });
-
+        await supabase.from('order_vehicles').insert({ order_id: orderData.id, vin: v.vin, ticket_id: 'TKT-' + generateId(), tracking_id: trackingId, status: 'pending' });
         const base = { vin: v.vin, tracking_id: trackingId, order_id: orderData.id, status: 'pending' };
         await supabase.from('shipment_tickets').insert({ ...base, ticket_no: 'SHP-' + generateId() });
         await supabase.from('delivery_tickets').insert({ ...base, ticket_no: 'DLV-' + generateId() });
@@ -505,160 +387,39 @@ export default function App() {
         await supabase.from('ais140_tickets').insert({ ...base, ticket_no: 'AIS-' + generateId() });
         await supabase.from('mining_tickets').insert({ ...base, mining_ticket_no: 'MIN-' + generateId() });
       }
-
-      await supabase.from('order_status_history').insert({
-        order_id:    orderData.id,
-        vin:         null,
-        stage:       'order',
-        from_status: null,
-        to_status:   'pending',
-        changed_by:  null,
-        notes:       'Order created',
-      });
-
       setShowNewOrder(false);
-    } catch (err) {
-      alert('Failed to create order: ' + err.message);
-    }
+    } catch (err) { alert('Failed: ' + err.message); }
   }
 
-  const inProgressCount = tickets.filter((t) => t.status === 'In Progress').length;
-
-  if (loading) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif", color: '#64748B', fontSize: 14 }}>
-        Loading {activeModule}…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div style={{ background: '#fff', border: '1px solid #FCA5A5', borderRadius: 12, padding: '24px 32px', color: '#DC2626', fontSize: 13, maxWidth: 400, textAlign: 'center' }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>Connection Error</div>
-          {error}
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC' }}>Loading {activeModule}…</div>;
+  if (error) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Error: {error}</div>;
 
   return (
-    <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: '100vh', background: '#F8FAFC', display: 'flex' }}>
-      <Sidebar
-        activeModule={activeModule}
-        onSelect={(m) => { setActiveModule(m); exitBulkMode(); setSearch(''); }}
-        totalOrders={tickets.length}
-      />
-
+    <div style={{ fontFamily: "'DM Sans', sans-serif", minHeight: '100vh', background: '#F8FAFC', display: 'flex' }}>
+      <Sidebar activeModule={activeModule} onSelect={handleModuleSwitch} totalOrders={tickets.length} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Top bar */}
         <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '13px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#0F172A', letterSpacing: -0.3 }}>{activeModule}</div>
-            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 1 }}>
-              {tickets.length} total · {inProgressCount} in progress
-              {!loadedMods[activeModule] && (
-                <span style={{ marginLeft: 8, color: '#CBD5E1' }}>loading…</span>
-              )}
-            </div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{activeModule}</div>
+            <div style={{ fontSize: 12, color: '#94A3B8' }}>{tickets.length} total · {inProgressCount} in progress {switchLoading && 'loading…'}</div>
           </div>
           <div style={{ flex: 1 }} />
-
-          {bulkMode && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, padding: '5px 12px' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#1D4ED8' }}>{selectedIds.size} selected</span>
-              {selectedIds.size > 0 && (
-                <button
-                  onClick={() => setShowBulkMove(true)}
-                  style={{ fontSize: 12, padding: '4px 12px', borderRadius: 7, border: 'none', background: '#2563EB', color: '#fff', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  Move Selected →
-                </button>
-              )}
-              <button
-                onClick={exitBulkMode}
-                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 7, border: '1px solid #BFDBFE', background: '#fff', color: '#2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search VIN, ticket no…"
-            style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13, width: 220, outline: 'none', fontFamily: 'inherit', background: '#F8FAFC', color: '#0F172A' }}
-          />
-          <button
-            onClick={() => bulkMode ? exitBulkMode() : setBulkMode(true)}
-            style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', border: `1.5px solid ${bulkMode ? '#2563EB' : '#E2E8F0'}`, background: bulkMode ? '#EFF6FF' : '#F8FAFC', color: bulkMode ? '#2563EB' : '#64748B' }}
-          >
-            ☑ Bulk
-          </button>
-          <button
-            onClick={() => setShowNewOrder(true)}
-            style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-          >
-            + Add Vehicles
-          </button>
+          {bulkMode && <div style={{ display: 'flex', gap: 8, background: '#EFF6FF', padding: '5px 12px', borderRadius: 10 }}><span style={{ fontSize: 12, fontWeight: 600 }}>{selectedIds.size} selected</span>{selectedIds.size > 0 && <button onClick={() => setShowBulkMove(true)} style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 7 }}>Move →</button>}<button onClick={exitBulkMode}>Cancel</button></div>}
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0' }} />
+          <button onClick={() => setBulkMode(!bulkMode)} style={{ padding: '8px 14px' }}>☑ Bulk</button>
+          <button onClick={() => setShowNewOrder(true)} style={{ background: '#2563EB', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: 8 }}>+ Add</button>
         </div>
-
-        {/* Kanban board */}
         <div style={{ flex: 1, overflowX: 'auto', padding: '20px 24px' }}>
           {(() => {
-            const activeCols = AIS_MINING_MODULES.includes(activeModule) ? AIS_MINING_COLUMNS : COLUMNS;
-            return (
-              <div style={{ display: 'flex', gap: 14, minWidth: activeCols.length * 210 }}>
-                {activeCols.map((col) => (
-                  <KanbanColumn
-                    key={col}
-                    col={col}
-                    orders={filteredTickets.filter((t) => t.status === col)}
-                    onMoveClick={setMoveTarget}
-                    onHistoryClick={setDetailOrder}
-                    selectedIds={selectedIds}
-                    onToggleSelect={toggleSelect}
-                    onSelectAll={selectAll}
-                    bulkMode={bulkMode}
-                    module={activeModule}
-                  />
-                ))}
-              </div>
-            );
+            const cols = AIS_MINING_MODULES.includes(activeModule) ? AIS_MINING_COLUMNS : COLUMNS;
+            return <div style={{ display: 'flex', gap: 14 }}>{cols.map((col) => <KanbanColumn key={col} col={col} orders={filteredTickets.filter((t) => t.status === col)} onMoveClick={setMoveTarget} onHistoryClick={setDetailOrder} selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectAll={selectAll} bulkMode={bulkMode} module={activeModule} />)}</div>;
           })()}
         </div>
       </div>
-
-      {detailOrder && (
-        <DetailDrawer
-          order={detailOrder}
-          onClose={() => setDetailOrder(null)}
-          onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }}
-        />
-      )}
-      {moveTarget && (
-        <MoveModal
-          order={moveTarget}
-          module={activeModule}
-          onClose={() => setMoveTarget(null)}
-          onMove={handleMove}
-        />
-      )}
-      {showBulkMove && (
-        <BulkMoveModal
-          count={selectedIds.size}
-          onClose={() => setShowBulkMove(false)}
-          onConfirm={handleBulkMove}
-        />
-      )}
-      {showNewOrder && (
-        <NewOrderModal
-          onClose={() => setShowNewOrder(false)}
-          onCreated={() => setShowNewOrder(false)}
-        />
-      )}
+      {detailOrder && <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }} />}
+      {moveTarget && <MoveModal order={moveTarget} module={activeModule} onClose={() => setMoveTarget(null)} onMove={handleMove} />}
+      {showBulkMove && <BulkMoveModal count={selectedIds.size} onClose={() => setShowBulkMove(false)} onConfirm={handleBulkMove} />}
+      {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)} onCreated={() => setShowNewOrder(false)} />}
     </div>
   );
 }
