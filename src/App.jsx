@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.14.6 - Strict No-Duplicate Architecture
+// Build Version: 2026.05.14.7 - Single-ticket move fix, updated_at, CVP API
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -12,6 +12,11 @@ import BulkMoveModal from './components/BulkMoveModal';
 import NewOrderModal from './components/NewOrderModal';
 
 import { supabase } from './supabaseClient';
+import {
+  deviceFitmentWebhook,
+  ais140RequestUpdate,
+  miningRequestUpdate,
+} from './cvpClient';
 
 const MODULE_TABLE = {
   Orders:       'orders',
@@ -106,7 +111,7 @@ export default function App() {
     if (module === 'Orders') {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, order_vehicles(vin, registration_no, model, make, engine_no, fuel_type, emission_type, mfg_year, rto_office_code, rto_state, tracking_id)')
+        .select('*, order_vehicles(vin, registration_no, model, make, engine_no, fuel_type, emission_type, mfg_year, rto_office_code, rto_state, tracking_id, status, updated_at)')
         .order('created_at', { ascending: false });
       if (error) throw error;
 
@@ -119,6 +124,9 @@ export default function App() {
           for (const v of vehicles) {
             rows.push(normalizeTicket({
               ...order,
+              // Per-vehicle status from order_vehicles — NOT the parent order status
+              status:          v.status || order.status,
+              updated_at:      v.updated_at || order.updated_at,
               vin:             v.vin,
               registration_no: v.registration_no,
               model:           v.model,
@@ -130,6 +138,8 @@ export default function App() {
               rto_office_code: v.rto_office_code,
               rto_state:       v.rto_state,
               tracking_id:     v.tracking_id || order.tracking_id,
+              // Keep the vehicle row's own identity for targeted updates
+              _vehicle_tracking_id: v.tracking_id,
               order_vehicles:  undefined,
             }, module));
           }
@@ -305,50 +315,103 @@ export default function App() {
     if (error) console.warn('History write failed:', error.message);
   }
 
-  // ─── Fire outbound webhook to TML ─────────────────────────────────────────
+  // ─── Fire outbound webhook via CVP client ─────────────────────────────────
+  // All calls are non-blocking (fire-and-forget with logged errors).
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
-    const apiBase   = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
     const STATUS_MAP = {
-      in_progress: 'IN_PROGRESS', completed: 'COMPLETED',
-      on_hold: 'ON_HOLD', cancelled: 'CANCELLED',
+      in_progress:                     'IN_PROGRESS',
+      completed:                       'COMPLETED',
+      on_hold:                         'ON_HOLD',
+      cancelled:                       'CANCELLED',
       cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST',
     };
-    const statusStr = STATUS_MAP[rawStatus];
+    const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
+
+    // Use the actual DB updated_at if present, else now — never use created_at
+    const updatedAt = ticket.updated_at
+      ? new Date(ticket.updated_at).toISOString()
+      : new Date().toISOString();
 
     try {
       if (activeModule === 'AIS140') {
-        await fetch(`${apiBase}/webhooks/v2/ais140-requests`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString(), metadata: {} }),
+        const { error } = await ais140RequestUpdate({
+          vin:             ticket.vin,
+          ticketNo:        ticket.ticket_no,
+          status:          statusStr,
+          remark:          extraFields.remark          || '',
+          handler:         extraFields.handler         || '',
+          handlerContact:  extraFields.handler_contact || '',
+          updatedAt,
+          metadata: {},
         });
+        if (error) console.warn('[cvp] AIS140 webhook error:', error);
+        else console.log(`[cvp] AIS140 webhook sent: ${ticket.ticket_no} → ${statusStr}`);
       }
+
       if (activeModule === 'Mining') {
-        await fetch(`${apiBase}/webhooks/mining-requests`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString(), metadata: {} }),
+        const { error } = await miningRequestUpdate({
+          vin:            ticket.vin,
+          ticketNo:       ticket.mining_ticket_no || ticket.ticket_no,
+          status:         statusStr,
+          remark:         extraFields.remark          || '',
+          handler:        extraFields.handler         || '',
+          handlerContact: extraFields.handler_contact || '',
+          updatedAt,
+          metadata: {},
         });
+        if (error) console.warn('[cvp] Mining webhook error:', error);
+        else console.log(`[cvp] Mining webhook sent: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
+
       if (activeModule === 'Installation' && rawStatus === 'completed') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), meta: { technicianName: extraFields.technician_name || '', installationDate: extraFields.scheduled_date || '', remarks: extraFields.remark || 'Marked completed from Kanban' } }),
+        const { error } = await deviceFitmentWebhook({
+          trackingId: ticket.tracking_id,
+          vin:        ticket.vin,
+          stage:      'DEVICE_INSTALLED',
+          updatedAt,
+          metadata: {
+            technicianName:   extraFields.technician_name || '',
+            installationDate: extraFields.scheduled_date  || '',
+            remarks:          extraFields.remark          || 'Marked completed from Kanban',
+          },
         });
+        if (error) console.warn('[cvp] DEVICE_INSTALLED webhook error:', error);
+        else console.log(`[cvp] DEVICE_INSTALLED sent: ${ticket.tracking_id}`);
       }
+
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), meta: { iccId: extraFields.iccid || '', courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '', expectedDelivery: extraFields.expected_delivery || '' } }),
+        const { error } = await deviceFitmentWebhook({
+          trackingId: ticket.tracking_id,
+          vin:        ticket.vin,
+          stage:      'TCU_SHIPPED',
+          updatedAt,
+          metadata: {
+            iccId:                 extraFields.icc_id        || extraFields.iccid || '',
+            courier:               extraFields.courier       || '',
+            courierTrackingNumber: extraFields.awb_number    || '',
+            expectedDelivery:      extraFields.expected_delivery || '',
+          },
         });
+        if (error) console.warn('[cvp] TCU_SHIPPED webhook error:', error);
+        else console.log(`[cvp] TCU_SHIPPED sent: ${ticket.tracking_id}`);
       }
+
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        await fetch(`${apiBase}/webhooks/device-fitment`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), meta: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } }),
+        const { error } = await deviceFitmentWebhook({
+          trackingId: ticket.tracking_id,
+          vin:        ticket.vin,
+          stage:      'TCU_DELIVERED',
+          updatedAt,
+          metadata: {
+            remarks: `Delivered to ${extraFields.delivered_to || ''}`,
+          },
         });
+        if (error) console.warn('[cvp] TCU_DELIVERED webhook error:', error);
+        else console.log(`[cvp] TCU_DELIVERED sent: ${ticket.tracking_id}`);
       }
     } catch (webhookErr) {
-      console.warn('[outbound] Webhook fire failed (non-blocking):', webhookErr.message);
+      console.warn('[cvp] Webhook fire failed (non-blocking):', webhookErr.message);
     }
   }
 
@@ -367,37 +430,62 @@ export default function App() {
   // ─── Single move ──────────────────────────────────────────────────────────
   async function handleMove(moveData) {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
-    const ticket = tickets.find((t) => t.id === moveTarget.id);
+
+    // For Orders module, rows are flattened by vehicle — match on id+vin
+    // For all other modules, each ticket has its own unique id
+    const ticket = activeModule === 'Orders'
+      ? tickets.find((t) => t.id === moveTarget.id && t.vin === moveTarget.vin)
+      : tickets.find((t) => t.id === moveTarget.id);
     if (!ticket) return;
 
-    const rawStatus    = displayToRaw(targetCol);
-    const allowedCols  = MODULE_DB_FIELDS[activeModule] || [];
+    const rawStatus   = displayToRaw(targetCol);
+    const allowedCols = MODULE_DB_FIELDS[activeModule] || [];
+    const now         = new Date().toISOString();
 
-    // dbFields: only keys that actually exist as columns in this module's table
-    const dbFields     = Object.fromEntries(
+    // Only whitelisted columns go to Supabase; everything else is webhook-only
+    const dbFields = Object.fromEntries(
       Object.entries(extraFields).filter(([k]) => allowedCols.includes(k))
     );
-    // webhookFields: full extraFields passed to the webhook (not written to DB)
     const webhookFields = { ...extraFields };
 
     try {
-      const { error: updateErr } = await supabase
-        .from(ticket._table)
-        .update({ status: rawStatus, ...dbFields })
-        .eq('id', ticket.id);
+      let updateErr;
+
+      if (activeModule === 'Orders') {
+        // Orders: update the specific vehicle row in order_vehicles by its tracking_id
+        // This ensures only ONE vehicle row moves, not all vehicles in the same order
+        const vehicleTrackingId = ticket._vehicle_tracking_id || ticket.tracking_id;
+        ({ error: updateErr } = await supabase
+          .from('order_vehicles')
+          .update({ status: rawStatus, updated_at: now })
+          .eq('tracking_id', vehicleTrackingId));
+      } else {
+        // All other modules: each ticket has a unique id — update exactly that row
+        ({ error: updateErr } = await supabase
+          .from(ticket._table)
+          .update({ status: rawStatus, updated_at: now, ...dbFields })
+          .eq('id', ticket.id));
+      }
       if (updateErr) throw updateErr;
 
-      await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
-      fireOutboundWebhook(ticket, rawStatus, webhookFields);
+      // Attach the fresh updated_at so the webhook uses the DB-stamped time
+      const ticketWithTime = { ...ticket, updated_at: now };
 
-      // Always full-replace after write
+      await writeHistory(ticketWithTime, ticket._rawStatus, rawStatus, { notes });
+      fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
+
+      // Full-replace after write — dedupTickets handles any residual dupes
       const fresh = await fetchModule(activeModule);
       setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
 
       setDetailOrder((prev) => {
         if (!prev || prev.id !== ticket.id) return prev;
-        const updated = fresh.find((t) => t.id === ticket.id);
-        return updated || { ...prev, status: targetCol, _rawStatus: rawStatus };
+        const updated = fresh.find((t) =>
+          activeModule === 'Orders'
+            ? t.id === ticket.id && t.vin === ticket.vin
+            : t.id === ticket.id
+        );
+        return updated || { ...prev, status: targetCol, _rawStatus: rawStatus, updated_at: now };
       });
     } catch (err) {
       alert('Failed to update: ' + err.message);
@@ -409,6 +497,7 @@ export default function App() {
   async function handleBulkMove({ targetCol }) {
     const ids       = [...selectedIds];
     const rawStatus = displayToRaw(targetCol);
+    const now       = new Date().toISOString();
 
     try {
       await Promise.all(ids.map(async (id) => {
@@ -416,10 +505,10 @@ export default function App() {
         if (!ticket) return;
         const { error: updateErr } = await supabase
           .from(ticket._table)
-          .update({ status: rawStatus })
+          .update({ status: rawStatus, updated_at: now })
           .eq('id', id);
         if (updateErr) throw updateErr;
-        await writeHistory(ticket, ticket._rawStatus, rawStatus);
+        await writeHistory({ ...ticket, updated_at: now }, ticket._rawStatus, rawStatus);
       }));
 
       // Full-replace after all writes
