@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.15.1 - VIN-Strict Dedup & Clean Realtime
+// Build Version: 2026.05.15.2 - Final VIN-Strict Deduplication
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -71,9 +71,8 @@ function displayToRaw(display) {
 }
 
 // ─── Strict dedup ────────────────────────────────────────────────────────────
-// Ensure each vehicle appears only once per module.
-// Orders: key = id + vin (to allow multiple vehicles in one order)
-// Others: key = vin (fallback to id)
+// Orders: key = id + vin
+// All others: key = vin (fallback to id)
 function dedupTickets(tickets, module) {
   if (!tickets || tickets.length === 0) return [];
   const seen = new Map();
@@ -88,7 +87,6 @@ function dedupTickets(tickets, module) {
     if (!seen.has(key)) {
       seen.set(key, t);
     } else {
-      // If we see the same car twice, keep the one with the latest update
       const existing = seen.get(key);
       const existingDate = new Date(existing.updated_at || 0);
       const newDate = new Date(t.updated_at || 0);
@@ -116,7 +114,6 @@ export default function App() {
   const activeModuleRef = useRef(activeModule);
   useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
 
-  // ─── Fetch one module ─────────────────────────────────────────────────────
   const fetchModule = useCallback(async (module) => {
     if (module === 'Orders') {
       const { data: vehicles, error: vErr } = await supabase
@@ -148,7 +145,6 @@ export default function App() {
           updated_at:      v.updated_at || order.updated_at,
         }, module);
       });
-
       return dedupTickets(rows, 'Orders');
     }
 
@@ -171,17 +167,13 @@ export default function App() {
     async function init() {
       setLoading(true);
       setError(null);
-      try {
-        await loadModule(activeModule);
-      } catch (err) {
-        setError('Failed to load: ' + err.message);
-      }
+      try { await loadModule(activeModule); } 
+      catch (err) { setError('Failed to load: ' + err.message); }
       setLoading(false);
     }
     init();
   }, []); // eslint-disable-line
 
-  // ─── Realtime subscriptions ───────────────────────────────────────────────
   useEffect(() => {
     let isCurrent = true;
     const channels = [];
@@ -196,17 +188,15 @@ export default function App() {
         debounceTimer = setTimeout(() => {
           if (!isCurrent) return;
           fetchModule('Orders').then((rows) => {
-            if (!isCurrent && isCurrent) return; // double check
+            if (!isCurrent) return;
             setTicketMap((prev) => ({ ...prev, Orders: rows }));
           });
         }, 250);
       };
-
       const vehiclesChannel = supabase
         .channel(`rt-order_vehicles-${Date.now()}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'order_vehicles' }, scheduleRefetch)
         .subscribe();
-
       channels.push(vehiclesChannel);
     } else {
       const channel = supabase
@@ -219,27 +209,19 @@ export default function App() {
             const current = prev[module] || [];
             if (payload.eventType === 'INSERT') {
               const newTicket = normalizeTicket(payload.new, module);
-              // Use VIN-based check for realtime insertion too
               const key = newTicket.vin || newTicket.tracking_id || String(newTicket.id);
               if (current.some((t) => (t.vin || t.tracking_id || String(t.id)) === key)) return prev;
               return { ...prev, [module]: [newTicket, ...current] };
             }
-
             if (payload.eventType === 'UPDATE') {
               const updated = normalizeTicket(payload.new, module);
               return {
                 ...prev,
-                [module]: current.map((t) =>
-                  String(t.id) === String(updated.id) ? updated : t
-                ),
+                [module]: current.map((t) => String(t.id) === String(updated.id) ? updated : t),
               };
             }
-
             if (payload.eventType === 'DELETE') {
-              return {
-                ...prev,
-                [module]: current.filter((t) => String(t.id) !== String(payload.old.id)),
-              };
+              return { ...prev, [module]: current.filter((t) => String(t.id) !== String(payload.old.id)) };
             }
             return prev;
           });
@@ -261,14 +243,12 @@ export default function App() {
     setSearch('');
     setActiveModule(mod);
     setSwitchLoading(true);
-    try {
-      await loadModule(mod);
-    } catch (_) {}
+    try { await loadModule(mod); } catch (_) {}
     setSwitchLoading(false);
   }, [activeModule, loadModule]);
 
-  const rawTickets      = ticketMap[activeModule] || [];
-  const tickets         = dedupTickets(rawTickets, activeModule);
+  const rawTickets = ticketMap[activeModule] || [];
+  const tickets    = dedupTickets(rawTickets, activeModule);
 
   const filteredTickets = tickets.filter((t) => {
     if (!search.trim()) return true;
@@ -292,22 +272,14 @@ export default function App() {
       return next;
     });
   }
-  function exitBulkMode() {
-    setSelectedIds(new Set());
-    setBulkMode(false);
-  }
+  function exitBulkMode() { setSelectedIds(new Set()); setBulkMode(false); }
 
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
     const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
     if (!orderId) return;
     await supabase.from('order_status_history').insert({
-      order_id:    orderId,
-      vin:         ticket.vin       || null,
-      stage:       MODULE_STAGE[activeModule],
-      from_status: fromRaw          || null,
-      to_status:   toRaw,
-      changed_by:  extra.changed_by || null,
-      notes:       extra.notes      || null,
+      order_id: orderId, vin: ticket.vin || null, stage: MODULE_STAGE[activeModule],
+      from_status: fromRaw || null, to_status: toRaw, changed_by: extra.changed_by || null, notes: extra.notes || null,
     });
   }
 
@@ -319,23 +291,12 @@ export default function App() {
     };
     const statusStr = STATUS_MAP[rawStatus];
     if (!statusStr) return;
-
     try {
-      if (activeModule === 'AIS140') {
-        await ais140RequestUpdate({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() });
-      }
-      if (activeModule === 'Mining') {
-        await miningRequestUpdate({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() });
-      }
-      if (activeModule === 'Installation' && rawStatus === 'completed') {
-        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), metadata: { technicianName: extraFields.technician_name || '', installationDate: extraFields.scheduled_date || '', remarks: extraFields.remark || '' } });
-      }
-      if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } });
-      }
-      if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } });
-      }
+      if (activeModule === 'AIS140') { await ais140RequestUpdate({ vin: ticket.vin, ticketNo: ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() }); }
+      if (activeModule === 'Mining') { await miningRequestUpdate({ vin: ticket.vin, ticketNo: ticket.mining_ticket_no || ticket.ticket_no, status: statusStr, remark: extraFields.remark || '', handler: extraFields.handler || '', handlerContact: extraFields.handler_contact || '', updatedAt: new Date().toISOString() }); }
+      if (activeModule === 'Installation' && rawStatus === 'completed') { await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), metadata: { technicianName: extraFields.technician_name || '', installationDate: extraFields.scheduled_date || '', remarks: extraFields.remark || '' } }); }
+      if (activeModule === 'Shipment' && rawStatus === 'in_progress') { await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } }); }
+      if (activeModule === 'Delivery' && rawStatus === 'completed') { await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } }); }
     } catch (e) { console.warn('Webhook failed', e); }
   }
 
@@ -343,14 +304,10 @@ export default function App() {
     const { targetCol, extraFields = {}, notes = '' } = moveData;
     const ticket = tickets.find((t) => activeModule === 'Orders' ? (t.id === moveTarget.id && t.vin === moveTarget.vin) : (t.id === moveTarget.id));
     if (!ticket) return;
-
     const rawStatus = displayToRaw(targetCol);
     try {
-      if (activeModule === 'Orders') {
-        await supabase.from('order_vehicles').update({ status: rawStatus, updated_at: new Date().toISOString() }).eq('tracking_id', ticket.tracking_id);
-      } else {
-        await supabase.from(ticket._table).update({ status: rawStatus, updated_at: new Date().toISOString(), ...extraFields }).eq('id', ticket.id);
-      }
+      if (activeModule === 'Orders') { await supabase.from('order_vehicles').update({ status: rawStatus, updated_at: new Date().toISOString() }).eq('tracking_id', ticket.tracking_id); } 
+      else { await supabase.from(ticket._table).update({ status: rawStatus, updated_at: new Date().toISOString(), ...extraFields }).eq('id', ticket.id); }
       await writeHistory(ticket, ticket._rawStatus, rawStatus, { notes });
       fireOutboundWebhook(ticket, rawStatus, extraFields);
       await loadModule(activeModule);
