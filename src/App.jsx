@@ -118,6 +118,17 @@ export default function App() {
   const activeModuleRef = useRef(activeModule);
   useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
 
+  // Debug: Expose state to console for subagent inspection
+  useEffect(() => {
+    window.DUMP_STATE = () => {
+      console.log('--- TML DEBUG DUMP ---');
+      console.log('Active Module:', activeModule);
+      console.log('Ticket Map:', ticketMap);
+      console.log('Current Tickets in render:', tickets);
+      return { activeModule, ticketMapLength: Object.keys(ticketMap).length };
+    };
+  }, [activeModule, ticketMap, tickets]);
+
   const fetchModule = useCallback(async (module) => {
     if (module === 'Orders') {
       const { data: vehicles, error: vErr } = await supabase
