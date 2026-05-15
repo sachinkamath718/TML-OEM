@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.15.10 - Installation Workflow Implementation
+// Build Version: 2026.05.15.12 - Final Crash Fix
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 import { generateId } from './utils';
 import Sidebar from './components/Sidebar';
@@ -141,7 +141,7 @@ export default function App() {
         <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 15 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{activeModule}</div>
-            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 10</div>
+            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 12</div>
           </div>
           <div style={{ flex: 1 }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0' }} />
