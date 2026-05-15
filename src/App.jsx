@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.15.2 - Final VIN-Strict Deduplication
+// Build Version: 2026.05.15.3 - Final State Name Sync
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
 import { generateId } from './utils';
@@ -70,9 +70,6 @@ function displayToRaw(display) {
   return map[display] || display.toLowerCase().replace(/ /g, '_');
 }
 
-// ─── Strict dedup ────────────────────────────────────────────────────────────
-// Orders: key = id + vin
-// All others: key = vin (fallback to id)
 function dedupTickets(tickets, module) {
   if (!tickets || tickets.length === 0) return [];
   const seen = new Map();
@@ -83,7 +80,6 @@ function dedupTickets(tickets, module) {
     } else {
       key = t.vin || t.tracking_id || String(t.id);
     }
-    
     if (!seen.has(key)) {
       seen.set(key, t);
     } else {
@@ -279,7 +275,7 @@ export default function App() {
     if (!orderId) return;
     await supabase.from('order_status_history').insert({
       order_id: orderId, vin: ticket.vin || null, stage: MODULE_STAGE[activeModule],
-      from_status: fromRaw || null, to_status: toRaw, changed_by: extra.changed_by || null, notes: extra.notes || null,
+      from_status: fromRaw || null, to_status:   toRaw, changed_by: extra.changed_by || null, notes: extra.notes || null,
     });
   }
 
@@ -347,6 +343,8 @@ export default function App() {
       setShowNewOrder(false);
     } catch (err) { alert('Failed: ' + err.message); }
   }
+
+  const inProgressCount = tickets.filter((t) => t.status === 'In Progress').length;
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC' }}>Loading {activeModule}…</div>;
   if (error) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Error: {error}</div>;
