@@ -163,7 +163,7 @@ export default function App() {
 
   const loadModule = useCallback(async (module) => {
     const rows = await fetchModule(module);
-    setTicketMap((prev) => ({ ...prev, [module]: rows }));
+    setTicketMap((prev) => ({ ...prev, [module]: dedupTickets(rows, module) }));
     return rows;
   }, [fetchModule]);
 
@@ -193,7 +193,7 @@ export default function App() {
           if (!isCurrent) return;
           fetchModule('Orders').then((rows) => {
             if (!isCurrent) return;
-            setTicketMap((prev) => ({ ...prev, Orders: rows }));
+            setTicketMap((prev) => ({ ...prev, Orders: dedupTickets(rows, 'Orders') }));
           });
         }, 250);
       };
@@ -211,32 +211,18 @@ export default function App() {
 
           setTicketMap((prev) => {
             const current = prev[module] || [];
+            let nextList = [...current];
+
             if (payload.eventType === 'INSERT') {
-              const newTicket = normalizeTicket(payload.new, module);
-              // Use normalized VIN-based check for realtime insertion too
-              const normVin = String(newTicket.vin || '').trim().toUpperCase();
-              const normTrk = String(newTicket.tracking_id || '').trim().toUpperCase();
-              const key = normVin || normTrk || String(newTicket.id);
-              
-              if (current.some((t) => {
-                const tVin = String(t.vin || '').trim().toUpperCase();
-                const tTrk = String(t.tracking_id || '').trim().toUpperCase();
-                return (tVin || tTrk || String(t.id)) === key;
-              })) return prev;
-              
-              return { ...prev, [module]: [newTicket, ...current] };
-            }
-            if (payload.eventType === 'UPDATE') {
+              nextList = [normalizeTicket(payload.new, module), ...current];
+            } else if (payload.eventType === 'UPDATE') {
               const updated = normalizeTicket(payload.new, module);
-              return {
-                ...prev,
-                [module]: current.map((t) => String(t.id) === String(updated.id) ? updated : t),
-              };
+              nextList = current.map((t) => String(t.id) === String(updated.id) ? updated : t);
+            } else if (payload.eventType === 'DELETE') {
+              nextList = current.filter((t) => String(t.id) !== String(payload.old.id));
             }
-            if (payload.eventType === 'DELETE') {
-              return { ...prev, [module]: current.filter((t) => String(t.id) !== String(payload.old.id)) };
-            }
-            return prev;
+            
+            return { ...prev, [module]: dedupTickets(nextList, module) };
           });
         })
         .subscribe();
