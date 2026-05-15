@@ -113,7 +113,7 @@ export default function App() {
       // Querying the child table directly gives one row per vehicle, no fan-out possible.
       const { data: vehicles, error: vErr } = await supabase
         .from('order_vehicles')
-        .select('*, orders(id, order_number, customer_name, created_at, created_by, tracking_id, status)')
+        .select('*, orders(id, order_number, created_at, created_by, tracking_id, status)')
         .order('created_at', { ascending: false });
       if (vErr) throw vErr;
 
@@ -123,7 +123,6 @@ export default function App() {
           // Order-level fields
           id:              order.id,
           order_number:    order.order_number,
-          customer_name:   order.customer_name,
           created_at:      v.created_at || order.created_at,
           created_by:      order.created_by,
           // Per-vehicle identity
