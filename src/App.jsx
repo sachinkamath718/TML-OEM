@@ -343,6 +343,17 @@ export default function App() {
     if (error) console.warn('History write failed:', error.message);
   }
 
+  // ─── Log webhook call to Supabase ─────────────────────────────────────────
+  async function logWebhook({ vin, tracking_id, module, stage, request, response, status_code, success }) {
+    await supabase.from('api_response_logs').insert({
+      vin, tracking_id, module, stage,
+      request: typeof request === 'object' ? JSON.stringify(request) : request,
+      response: typeof response === 'object' ? JSON.stringify(response) : response,
+      status_code: status_code || null,
+      success: !!success,
+    }).then(({ error }) => { if (error) console.warn('Log write failed:', error.message); });
+  }
+
   // ─── Fire outbound webhook via CVP client ─────────────────────────────────
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
     const STATUS_MAP = {
@@ -495,7 +506,7 @@ export default function App() {
       const ticketWithTime = { ...ticket, updated_at: now };
 
       await writeHistory(ticketWithTime, ticket._rawStatus, rawStatus, { notes });
-      fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
+      await fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
 
       const fresh = await fetchModule(activeModule);
       setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
