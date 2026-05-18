@@ -344,6 +344,15 @@ export default function App() {
   }
 
   // ─── Fire outbound webhook via CVP client ─────────────────────────────────
+  async function logWebhook({ vin, tracking_id, module, stage, request, response, status_code, success }) {
+    await supabase.from('api_response_logs').insert({
+      vin, tracking_id, module, stage,
+      request, response,
+      status_code: status_code || null,
+      success: !!success,
+    }).then(({ error }) => { if (error) console.warn('Log write failed:', error.message); });
+  }
+
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
     const STATUS_MAP = {
       in_progress:                     'IN_PROGRESS',
@@ -355,18 +364,13 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    // Force ISO string — ticket.updated_at may be a numeric epoch from the DB,
-    // which would serialize as a number in JSON and fail CVP validation.
-    const rawTs = ticket.updated_at;
-    const updatedAt = rawTs
-      ? (typeof rawTs === 'string' && rawTs.includes('T')
-          ? rawTs
-          : new Date(typeof rawTs === 'number' ? rawTs : Number(rawTs)).toISOString())
-      : new Date().toISOString();
+    // Use YYYY-MM-DD HH:mm:ss format as the API seems to reject ISO strings
+    const now = new Date();
+    const updatedAt = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
 
     try {
       if (activeModule === 'AIS140') {
-        const { error } = await ais140RequestUpdate({
+        const req = {
           vin:             ticket.vin,
           ticketNo:        ticket.ticket_no,
           status:          statusStr,
@@ -375,13 +379,15 @@ export default function App() {
           handlerContact:  extraFields.handler_contact || '',
           updatedAt,
           metadata: {},
-        });
+        };
+        const { data, error } = await ais140RequestUpdate(req);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'AIS140', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
         if (error) console.warn('[cvp] AIS140 webhook error:', error);
         else console.log(`[cvp] AIS140 webhook sent: ${ticket.ticket_no} → ${statusStr}`);
       }
 
       if (activeModule === 'Mining') {
-        const { error } = await miningRequestUpdate({
+        const req = {
           vin:            ticket.vin,
           ticketNo:       ticket.mining_ticket_no || ticket.ticket_no,
           status:         statusStr,
@@ -390,13 +396,15 @@ export default function App() {
           handlerContact: extraFields.handler_contact || '',
           updatedAt,
           metadata: {},
-        });
+        };
+        const { data, error } = await miningRequestUpdate(req);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
         if (error) console.warn('[cvp] Mining webhook error:', error);
         else console.log(`[cvp] Mining webhook sent: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
 
       if (activeModule === 'Installation' && rawStatus === 'completed') {
-        const { error } = await deviceFitmentWebhook({
+        const req = {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
@@ -406,13 +414,15 @@ export default function App() {
             installationDate: extraFields.scheduled_date  || '',
             remarks:          extraFields.remark          || 'Marked completed from Kanban',
           },
-        });
+        };
+        const { data, error } = await deviceFitmentWebhook(req);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Installation', stage: 'DEVICE_INSTALLED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
         if (error) console.warn('[cvp] DEVICE_INSTALLED webhook error:', error);
         else console.log(`[cvp] DEVICE_INSTALLED sent: ${ticket.tracking_id}`);
       }
 
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        const { error } = await deviceFitmentWebhook({
+        const req = {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
@@ -423,13 +433,15 @@ export default function App() {
             courierTrackingNumber: extraFields.awb_number    || '',
             expectedDelivery:      extraFields.expected_delivery || '',
           },
-        });
+        };
+        const { data, error } = await deviceFitmentWebhook(req);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Shipment', stage: 'TCU_SHIPPED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
         if (error) console.warn('[cvp] TCU_SHIPPED webhook error:', error);
         else console.log(`[cvp] TCU_SHIPPED sent: ${ticket.tracking_id}`);
       }
 
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        const { error } = await deviceFitmentWebhook({
+        const req = {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
@@ -437,7 +449,9 @@ export default function App() {
           metadata: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
-        });
+        };
+        const { data, error } = await deviceFitmentWebhook(req);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Delivery', stage: 'TCU_DELIVERED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
         if (error) console.warn('[cvp] TCU_DELIVERED webhook error:', error);
         else console.log(`[cvp] TCU_DELIVERED sent: ${ticket.tracking_id}`);
       }
