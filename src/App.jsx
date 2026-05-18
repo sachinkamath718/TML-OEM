@@ -364,9 +364,7 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    // Use YYYY-MM-DD HH:mm:ss format as the API seems to reject ISO strings with T and Z
-    const now = new Date();
-    const updatedAt = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    const updatedAt = new Date().toISOString();
 
     try {
       if (activeModule === 'AIS140') {
