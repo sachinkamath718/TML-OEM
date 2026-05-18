@@ -364,7 +364,7 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    const updatedAt = new Date().toISOString();
+    const updatedAt = Date.now();
 
     try {
       if (activeModule === 'AIS140') {
