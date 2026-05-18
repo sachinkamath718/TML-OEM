@@ -364,7 +364,10 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    const updatedAt = Date.now();
+    // deviceFitmentWebhook (/webhooks/device-fitment) expects updatedAt as Unix epoch ms (number).
+    // ais140 and mining endpoints expect updatedAt as ISO 8601 string.
+    const updatedAtMs  = Date.now();
+    const updatedAtIso = new Date(updatedAtMs).toISOString();
 
     try {
       if (activeModule === 'AIS140') {
@@ -375,9 +378,8 @@ export default function App() {
           remark:          extraFields.remark          || '',
           handler:         extraFields.handler         || '',
           handlerContact:  extraFields.handler_contact || '',
-          updatedAt,
-          updated_at,
-          metadata: {},
+          updatedAt:      updatedAtIso,
+          metadata:       {},
         };
         const { data, error } = await ais140RequestUpdate(req);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'AIS140', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
@@ -393,9 +395,8 @@ export default function App() {
           remark:         extraFields.remark          || '',
           handler:        extraFields.handler         || '',
           handlerContact: extraFields.handler_contact || '',
-          updatedAt,
-          updated_at,
-          metadata: {},
+          updatedAt:      updatedAtIso,
+          metadata:       {},
         };
         const { data, error } = await miningRequestUpdate(req);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
@@ -408,7 +409,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
-          updatedAt,
+          updatedAt:  updatedAtMs,
           meta: {
             technicianName:   extraFields.technician_name || '',
             installationDate: extraFields.scheduled_date  || '',
@@ -426,7 +427,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
-          updatedAt,
+          updatedAt:  updatedAtMs,
           meta: {
             iccId:                 extraFields.icc_id        || extraFields.iccid || '',
             courier:               extraFields.courier       || '',
@@ -445,7 +446,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
-          updatedAt,
+          updatedAt:  updatedAtMs,
           meta: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
