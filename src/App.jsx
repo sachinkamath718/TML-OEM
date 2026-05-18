@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-// Build Version: 2026.05.15.12 - Final Crash Fix
+// Build Version: 2026.05.15.13 - Sync & Error Fix
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 import { generateId } from './utils';
 import Sidebar from './components/Sidebar';
@@ -8,6 +8,7 @@ import MoveModal from './components/MoveModal';
 import DetailDrawer from './components/DetailDrawer';
 import BulkMoveModal from './components/BulkMoveModal';
 import NewOrderModal from './components/NewOrderModal';
+import WebhookLogPanel from './components/WebhookLogPanel';
 import { supabase } from './supabaseClient';
 import { deviceFitmentWebhook, ais140RequestUpdate, miningRequestUpdate } from './cvpClient';
 
@@ -47,6 +48,7 @@ export default function App() {
   const [moveTarget, setMoveTarget] = useState(null);
   const [detailOrder, setDetailOrder] = useState(null);
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const [showWebhookLog, setShowWebhookLog] = useState(false);
 
   const activeModuleRef = useRef(activeModule);
   useEffect(() => { activeModuleRef.current = activeModule; }, [activeModule]);
@@ -54,7 +56,7 @@ export default function App() {
   const fetchModule = useCallback(async (mod) => {
     if (mod === 'Orders') {
       const { data } = await supabase.from('order_vehicles').select('*, orders(*)').order('created_at', { ascending: false });
-      return (data || []).map(v => normalizeTicket({ ...v, ...v.orders, id: v.orders.id, vin: v.vin, tracking_id: v.tracking_id, status: v.status || v.orders.status }, mod));
+      return (data || []).map(v => normalizeTicket({ ...v, ...v.orders, id: v.id, vin: v.vin, tracking_id: v.tracking_id, status: v.status || v.orders.status }, mod));
     }
     const { data } = await supabase.from(MODULE_TABLE[mod]).select('*').order('created_at', { ascending: false });
     return (data || []).map(t => normalizeTicket(t, mod));
@@ -78,10 +80,9 @@ export default function App() {
   }, [activeModule, fetchModule]);
 
   async function writeHistory(ticket, fromRaw, toRaw, extra = {}) {
-    const orderId = activeModule === 'Orders' ? ticket.id : ticket.order_id;
-    if (!orderId) return;
-    await supabase.from('order_status_history').insert({
-      ticket_id: ticket.ticket_no || ticket.mining_ticket_no || String(ticket.id),
+    const ticketId = ticket.ticket_no || ticket.mining_ticket_no || String(ticket.id);
+    const { error } = await supabase.from('order_status_history').insert({
+      ticket_id: ticketId,
       module: activeModule,
       vin: ticket.vin || null,
       from_status: fromRaw || null,
@@ -89,6 +90,16 @@ export default function App() {
       notes: extra.notes || null,
       metadata: extra.metadata || null
     });
+    if (error) console.error('History Error:', error);
+  }
+
+  async function logWebhook({ vin, tracking_id, module, stage, request, response, status_code, success }) {
+    await supabase.from('api_response_logs').insert({
+      vin, tracking_id, module, stage,
+      request, response,
+      status_code: status_code || null,
+      success: !!success,
+    }).then(({ error }) => { if (error) console.warn('Log write failed:', error.message); });
   }
 
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
@@ -104,23 +115,29 @@ export default function App() {
         certificateNumber: extraFields.certificate_number || null,
         certificateFileName: extraFields.certificate_file_name || null
       };
-      if (activeModule === 'AIS140') await ais140RequestUpdate(common);
-      if (activeModule === 'Mining') await miningRequestUpdate(common);
-      if (activeModule === 'Installation' && rawStatus === 'completed') {
-        await deviceFitmentWebhook({
-          trackingId: ticket.tracking_id,
-          vin: ticket.vin,
-          stage: 'DEVICE_INSTALLED',
-          updatedAt: new Date().toISOString(),
-          metadata: {
-            imei: extraFields.device_imei || ticket.device_imei,
-            technicianName: extraFields.technician_name || ticket.technician_name,
-            remarks: extraFields.remark || ''
-          }
-        });
+      if (activeModule === 'AIS140') {
+        const { data, error } = await ais140RequestUpdate(common);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'AIS140', stage: statusStr, request: common, response: data || error, status_code: error ? 500 : 200, success: !error });
       }
-      if (activeModule === 'Shipment' && rawStatus === 'in_progress') await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } });
-      if (activeModule === 'Delivery' && rawStatus === 'completed') await deviceFitmentWebhook({ trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } });
+      if (activeModule === 'Mining') {
+        const { data, error } = await miningRequestUpdate(common);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: common, response: data || error, status_code: error ? 500 : 200, success: !error });
+      }
+      if (activeModule === 'Installation' && rawStatus === 'completed') {
+        const payload = { trackingId: ticket.tracking_id || '', vin: ticket.vin || '', stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), metadata: { imei: extraFields.device_imei || ticket.device_imei || '', technicianName: extraFields.technician_name || ticket.technician_name || '', remarks: extraFields.remark || '' } };
+        const { data, error } = await deviceFitmentWebhook(payload);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Installation', stage: 'DEVICE_INSTALLED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
+      }
+      if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
+        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } };
+        const { data, error } = await deviceFitmentWebhook(payload);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Shipment', stage: 'TCU_SHIPPED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
+      }
+      if (activeModule === 'Delivery' && rawStatus === 'completed') {
+        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } };
+        const { data, error } = await deviceFitmentWebhook(payload);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Delivery', stage: 'TCU_DELIVERED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
+      }
     } catch (e) { console.warn('Webhook failed', e); }
   }
 
@@ -141,11 +158,12 @@ export default function App() {
         <div style={{ background: '#fff', borderBottom: '1px solid #E2E8F0', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 15 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{activeModule}</div>
-            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 12</div>
+            <div style={{ fontSize: 12, color: '#94A3B8' }}>{uniqueTickets.length} unique items · Build 13</div>
           </div>
           <div style={{ flex: 1 }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0' }} />
-          <button onClick={() => { setActiveModule(activeModule); load(activeModule); }} style={{ padding: '8px 12px' }}>Refresh</button>
+          <button onClick={() => { load(activeModule); }} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', cursor: 'pointer' }}>Refresh</button>
+          <button onClick={() => setShowWebhookLog(true)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', cursor: 'pointer' }}>Webhook Log</button>
         </div>
         <div style={{ flex: 1, overflowX: 'auto', padding: 24 }}>
           <div style={{ display: 'flex', gap: 15 }}>
@@ -154,7 +172,13 @@ export default function App() {
                 key={`${activeModule}-${col}`} 
                 col={col} 
                 orders={filtered.filter(t => t.status === col)} 
-                onMoveClick={setMoveTarget} 
+                onMoveClick={(t) => {
+                  if (activeModule === 'Orders') {
+                    alert('Please switch to a specific module tab (Installation, Shipment, etc.) to move ticket status.');
+                  } else {
+                    setMoveTarget(t);
+                  }
+                }} 
                 onHistoryClick={setDetailOrder} 
                 selectedIds={new Set()} 
                 onToggleSelect={()=>{}} 
@@ -169,18 +193,24 @@ export default function App() {
       {detailOrder && <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={o => { setMoveTarget(o); setDetailOrder(null); }} />}
       {moveTarget && <MoveModal order={moveTarget} module={activeModule} onClose={() => setMoveTarget(null)} onMove={async (d) => {
         const raw = displayToRaw(d.targetCol);
-        const ticket = uniqueTickets.find(t => t.id === moveTarget.id);
+        const ticket = uniqueTickets.find(t => String(t.id) === String(moveTarget.id));
         if (!ticket) return;
         try {
+          // 1. Update module table
           await supabase.from(moveTarget._table).update({ status: raw, updated_at: new Date().toISOString(), ...d.extraFields }).eq('id', moveTarget.id);
+          // 2. Sync to order_vehicles (if VIN exists)
+          if (ticket.vin) {
+            await supabase.from('order_vehicles').update({ status: raw, updated_at: new Date().toISOString() }).eq('vin', ticket.vin);
+          }
+          // 3. Write History & Webhook
           await writeHistory(ticket, ticket._rawStatus, raw, { notes: d.notes, metadata: d.extraFields });
           await fireOutboundWebhook(ticket, raw, d.extraFields);
           load(activeModule);
         } catch (err) { alert('Failed: ' + err.message); }
         setMoveTarget(null);
       }} />}
-      {detailOrder && <DetailDrawer order={detailOrder} onClose={() => setDetailOrder(null)} onMoveClick={(o) => { setMoveTarget(o); setDetailOrder(null); }} />}
       {showNewOrder && <NewOrderModal onClose={() => setShowNewOrder(false)} onCreated={() => setShowNewOrder(false)} />}
+      {showWebhookLog && <WebhookLogPanel onClose={() => setShowWebhookLog(false)} />}
     </div>
   );
 }

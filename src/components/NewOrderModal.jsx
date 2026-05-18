@@ -77,6 +77,15 @@ export default function NewOrderModal({ onClose, onCreated }) {
         <div style={{ fontSize: 16, fontWeight: 700, color: '#111827', marginBottom: 4 }}>Add Vehicles</div>
         <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 20 }}>Enter one VIN per line. Tickets will be created across all modules automatically.</div>
 
+        {/* Created By — read-only */}
+        <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#6B7280' }}>Created By</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#374151', fontFamily: 'DM Mono, monospace' }}>System</span>
+            <span style={{ fontSize: 10, color: '#9CA3AF', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 4, padding: '1px 6px' }}>🔒 read-only</span>
+          </div>
+        </div>
+
         <div style={{ marginBottom: 14 }}>
           <label style={lbl}>OEM Name</label>
           <input value={oem} onChange={(e) => setOem(e.target.value)} placeholder="Tata Motors" style={inp} />
