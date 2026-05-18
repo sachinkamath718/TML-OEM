@@ -111,7 +111,7 @@ export default function App() {
         ticketNo: ticket.ticket_no || ticket.mining_ticket_no, 
         status: statusStr, 
         remark: extraFields.remark || '', 
-        updatedAt: new Date().toISOString().replace(/\.\d+/, ''),
+        updatedAt: Date.now(),
         certificateNumber: extraFields.certificate_number || null,
         certificateFileName: extraFields.certificate_file_name || null
       };
@@ -124,17 +124,17 @@ export default function App() {
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: common, response: data || error, status_code: error ? 500 : 200, success: !error });
       }
       if (activeModule === 'Installation' && rawStatus === 'completed') {
-        const payload = { trackingId: ticket.tracking_id || '', vin: ticket.vin || '', stage: 'DEVICE_INSTALLED', updatedAt: new Date().toISOString(), metadata: { imei: extraFields.device_imei || ticket.device_imei || '', technicianName: extraFields.technician_name || ticket.technician_name || '', remarks: extraFields.remark || '' } };
+        const payload = { trackingId: ticket.tracking_id || '', vin: ticket.vin || '', stage: 'DEVICE_INSTALLED', updatedAt: Date.now(), metadata: { imei: extraFields.device_imei || ticket.device_imei || '', technicianName: extraFields.technician_name || ticket.technician_name || '', remarks: extraFields.remark || '' } };
         const { data, error } = await deviceFitmentWebhook(payload);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Installation', stage: 'DEVICE_INSTALLED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
       }
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: new Date().toISOString().replace(/\.\d+/, ''), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } };
+        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_SHIPPED', updatedAt: Date.now(), metadata: { courier: extraFields.courier || '', courierTrackingNumber: extraFields.awb_number || '' } };
         const { data, error } = await deviceFitmentWebhook(payload);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Shipment', stage: 'TCU_SHIPPED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
       }
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: new Date().toISOString().replace(/\.\d+/, ''), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } };
+        const payload = { trackingId: ticket.tracking_id, vin: ticket.vin, stage: 'TCU_DELIVERED', updatedAt: Date.now(), metadata: { remarks: `Delivered to ${extraFields.delivered_to || ''}` } };
         const { data, error } = await deviceFitmentWebhook(payload);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Delivery', stage: 'TCU_DELIVERED', request: payload, response: data || error, status_code: error ? 500 : 200, success: !error });
       }
