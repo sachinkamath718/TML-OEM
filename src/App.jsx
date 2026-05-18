@@ -411,6 +411,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
+          updatedAt:  Math.floor(Date.now() / 1000),
           meta: {
             technicianName:   extraFields.technician_name || '',
             installationDate: extraFields.scheduled_date  || '',
@@ -428,6 +429,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
+          updatedAt:  Math.floor(Date.now() / 1000),
           meta: {
             iccId:                 extraFields.icc_id        || extraFields.iccid || '',
             courier:               extraFields.courier       || '',
@@ -446,6 +448,7 @@ export default function App() {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
+          updatedAt:  Math.floor(Date.now() / 1000),
           meta: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
