@@ -364,8 +364,7 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    const updatedAt = Date.now();
-    const updated_at = Date.now();
+    const updatedAt = new Date().toISOString().replace(/\.\d+/, '');
 
     try {
       if (activeModule === 'AIS140') {
@@ -410,8 +409,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
           updatedAt,
-          updated_at,
-          metadata: {
+          meta: {
             technicianName:   extraFields.technician_name || '',
             installationDate: extraFields.scheduled_date  || '',
             remarks:          extraFields.remark          || 'Marked completed from Kanban',
@@ -429,8 +427,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
           updatedAt,
-          updated_at,
-          metadata: {
+          meta: {
             iccId:                 extraFields.icc_id        || extraFields.iccid || '',
             courier:               extraFields.courier       || '',
             courierTrackingNumber: extraFields.awb_number    || '',
@@ -449,8 +446,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
           updatedAt,
-          updated_at,
-          metadata: {
+          meta: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
         };
