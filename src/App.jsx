@@ -579,7 +579,7 @@ export default function App() {
     setLogsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('webhook_logs')
+        .from('api_response_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(30);
@@ -784,16 +784,16 @@ export default function App() {
                     {ok  && <span style={{ fontSize: 13, color: '#22C55E' }}>▶</span>}
                   </div>
                   <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>{dateStr}, {timeStr}</div>
-                  {log.request_body && (
+                  {log.request && (
                     <details style={{ marginTop: 8 }}>
                       <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Request</summary>
-                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.request_body === 'string' ? log.request_body : JSON.stringify(log.request_body, null, 2)}</pre>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.request === 'string' ? log.request : JSON.stringify(log.request, null, 2)}</pre>
                     </details>
                   )}
-                  {log.response_body && (
+                  {log.response && (
                     <details style={{ marginTop: 4 }}>
                       <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Response</summary>
-                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.response_body === 'string' ? log.response_body : JSON.stringify(log.response_body, null, 2)}</pre>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.response === 'string' ? log.response : JSON.stringify(log.response, null, 2)}</pre>
                     </details>
                   )}
                 </div>
