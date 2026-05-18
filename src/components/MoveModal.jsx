@@ -349,13 +349,7 @@ export default function MoveModal({ order, module, onClose, onMove }) {
         {fieldType === 'orders' && targetCol && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
             <div>{lbl('Order ID')}<input value={order?.order_number || order?.id || '—'} readOnly style={{ ...inp, background: '#F8FAFC', color: '#94A3B8', cursor: 'not-allowed' }} /></div>
-            <div>
-              {lbl('Created By')}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>System</span>
-                <span style={{ fontSize: 10, color: '#94A3B8', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 4, padding: '1px 6px' }}>🔒 read-only</span>
-              </div>
-            </div>
+            <div>{lbl('Created By')}<input value="System" readOnly style={{ ...inp, background: '#F8FAFC', color: '#94A3B8', cursor: 'not-allowed' }} /></div>
             <div>
               {lbl('Remarks')}
               <textarea value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional remarks…" rows={2} style={{ ...inp, resize: 'vertical' }} />
