@@ -98,6 +98,9 @@ export default function App() {
   const [bulkMode, setBulkMode]         = useState(false);
   const [showBulkMove, setShowBulkMove] = useState(false);
   const [showNewOrder, setShowNewOrder] = useState(false);
+  const [showWebhookLog, setShowWebhookLog] = useState(false);
+  const [webhookLogs, setWebhookLogs]       = useState([]);
+  const [logsLoading, setLogsLoading]       = useState(false);
   const [search, setSearch]             = useState('');
 
   // Tracks the current active module for realtime handler closures
@@ -565,6 +568,20 @@ export default function App() {
     }
   }
 
+  // ─── Fetch webhook logs ───────────────────────────────────────────────────
+  const fetchWebhookLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('webhook_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      if (!error) setWebhookLogs(data || []);
+    } catch (_) {}
+    setLogsLoading(false);
+  }, []);
+
   const inProgressCount = tickets.filter((t) => t.status === 'In Progress').length;
 
   if (loading) {
@@ -641,6 +658,18 @@ export default function App() {
             ☑ Bulk
           </button>
           <button
+            onClick={() => loadModule(activeModule)}
+            style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', border: '1.5px solid #E2E8F0', background: '#F8FAFC', color: '#64748B' }}
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => { setShowWebhookLog(true); fetchWebhookLogs(); }}
+            style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', border: '1.5px solid #E2E8F0', background: '#F8FAFC', color: '#64748B' }}
+          >
+            Webhook Log
+          </button>
+          <button
             onClick={() => setShowNewOrder(true)}
             style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#2563EB', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
           >
@@ -701,6 +730,71 @@ export default function App() {
           onClose={() => setShowNewOrder(false)}
           onCreated={() => setShowNewOrder(false)}
         />
+      )}
+      {showWebhookLog && (
+        <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 520, background: '#fff', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)', zIndex: 100, display: 'flex', flexDirection: 'column' }}>
+          {/* Header */}
+          <div style={{ padding: '20px 24px 14px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: '#0F172A' }}>Webhook Log</div>
+              <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>Last 30 outbound CVP / TML API calls</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                onClick={fetchWebhookLogs}
+                style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, border: '1.5px solid #E2E8F0', background: '#F8FAFC', color: '#64748B', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                ↺ Refresh
+              </button>
+              <button
+                onClick={() => setShowWebhookLog(false)}
+                style={{ padding: '6px 10px', borderRadius: 8, fontSize: 16, border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          {/* Log list */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {logsLoading ? (
+              <div style={{ textAlign: 'center', color: '#94A3B8', fontSize: 13, padding: '40px 0' }}>Loading…</div>
+            ) : webhookLogs.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#94A3B8', fontSize: 13, padding: '40px 0' }}>No webhook logs found</div>
+            ) : webhookLogs.map((log, i) => {
+              const ok      = log.status_code >= 200 && log.status_code < 300;
+              const ts      = log.created_at ? new Date(log.created_at) : null;
+              const dateStr = ts ? ts.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
+              const timeStr = ts ? ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + ts.toLocaleTimeString('en-GB', { hour12: true }).slice(-2).toLowerCase() : '';
+              return (
+                <div key={log.id || i} style={{ background: ok ? '#F0FDF4' : '#FFF1F2', border: `1px solid ${ok ? '#BBF7D0' : '#FECDD3'}`, borderRadius: 12, padding: '12px 16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: ok ? '#22C55E' : '#F43F5E', display: 'inline-block', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, background: '#E0F2FE', color: '#0369A1', borderRadius: 6, padding: '2px 8px' }}>{log.module || log.stage || '—'}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{log.event_type || log.stage || '—'}</span>
+                    <span style={{ fontSize: 12, color: '#64748B' }}>{log.vin || '—'}</span>
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: ok ? '#16A34A' : '#E11D48', background: ok ? '#DCFCE7' : '#FFE4E6', borderRadius: 6, padding: '2px 8px' }}>{log.status_code ?? '—'}</span>
+                    {!ok && <span style={{ fontSize: 16, color: '#F43F5E' }}>✕</span>}
+                    {ok  && <span style={{ fontSize: 13, color: '#22C55E' }}>▶</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>{dateStr}, {timeStr}</div>
+                  {log.request_body && (
+                    <details style={{ marginTop: 8 }}>
+                      <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Request</summary>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.request_body === 'string' ? log.request_body : JSON.stringify(log.request_body, null, 2)}</pre>
+                    </details>
+                  )}
+                  {log.response_body && (
+                    <details style={{ marginTop: 4 }}>
+                      <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Response</summary>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.response_body === 'string' ? log.response_body : JSON.stringify(log.response_body, null, 2)}</pre>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
