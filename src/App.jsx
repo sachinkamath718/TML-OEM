@@ -344,15 +344,6 @@ export default function App() {
   }
 
   // ─── Fire outbound webhook via CVP client ─────────────────────────────────
-  async function logWebhook({ vin, tracking_id, module, stage, request, response, status_code, success }) {
-    await supabase.from('api_response_logs').insert({
-      vin, tracking_id, module, stage,
-      request, response,
-      status_code: status_code || null,
-      success: !!success,
-    }).then(({ error }) => { if (error) console.warn('Log write failed:', error.message); });
-  }
-
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
     const STATUS_MAP = {
       in_progress:                     'IN_PROGRESS',
@@ -364,94 +355,82 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    const updatedAt = Date.now();
+    // deviceFitmentWebhook (/webhooks/device-fitment) expects updatedAt as Unix epoch ms (number).
+    // ais140 and mining endpoints expect updatedAt as ISO 8601 string.
+    const updatedAtMs  = Date.now();
+    const updatedAtIso = new Date(updatedAtMs).toISOString();
 
     try {
       if (activeModule === 'AIS140') {
-        const req = {
-          vin:             ticket.vin,
-          ticketNo:        ticket.ticket_no,
-          status:          statusStr,
-          remark:          extraFields.remark          || '',
-          handler:         extraFields.handler         || '',
-          handlerContact:  extraFields.handler_contact || '',
-          updatedAt,
-          updated_at,
-          metadata: {},
-        };
-        const { data, error } = await ais140RequestUpdate(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'AIS140', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+        const { error } = await ais140RequestUpdate({
+          vin:            ticket.vin,
+          ticketNo:       ticket.ticket_no,
+          status:         statusStr,
+          remark:         extraFields.remark          || '',
+          handler:        extraFields.handler         || '',
+          handlerContact: extraFields.handler_contact || '',
+          updatedAt:      updatedAtIso,
+          metadata:       {},
+        });
         if (error) console.warn('[cvp] AIS140 webhook error:', error);
         else console.log(`[cvp] AIS140 webhook sent: ${ticket.ticket_no} → ${statusStr}`);
       }
 
       if (activeModule === 'Mining') {
-        const req = {
+        const { error } = await miningRequestUpdate({
           vin:            ticket.vin,
           ticketNo:       ticket.mining_ticket_no || ticket.ticket_no,
           status:         statusStr,
           remark:         extraFields.remark          || '',
           handler:        extraFields.handler         || '',
           handlerContact: extraFields.handler_contact || '',
-          updatedAt,
-          updated_at,
-          metadata: {},
-        };
-        const { data, error } = await miningRequestUpdate(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+          updatedAt:      updatedAtIso,
+          metadata:       {},
+        });
         if (error) console.warn('[cvp] Mining webhook error:', error);
         else console.log(`[cvp] Mining webhook sent: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
 
       if (activeModule === 'Installation' && rawStatus === 'completed') {
-        const req = {
+        const { error } = await deviceFitmentWebhook({
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
-          updatedAt,
           meta: {
             technicianName:   extraFields.technician_name || '',
             installationDate: extraFields.scheduled_date  || '',
             remarks:          extraFields.remark          || 'Marked completed from Kanban',
           },
-        };
-        const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Installation', stage: 'DEVICE_INSTALLED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+        });
         if (error) console.warn('[cvp] DEVICE_INSTALLED webhook error:', error);
         else console.log(`[cvp] DEVICE_INSTALLED sent: ${ticket.tracking_id}`);
       }
 
       if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        const req = {
+        const { error } = await deviceFitmentWebhook({
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
-          updatedAt,
           meta: {
             iccId:                 extraFields.icc_id        || extraFields.iccid || '',
             courier:               extraFields.courier       || '',
             courierTrackingNumber: extraFields.awb_number    || '',
             expectedDelivery:      extraFields.expected_delivery || '',
           },
-        };
-        const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Shipment', stage: 'TCU_SHIPPED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+        });
         if (error) console.warn('[cvp] TCU_SHIPPED webhook error:', error);
         else console.log(`[cvp] TCU_SHIPPED sent: ${ticket.tracking_id}`);
       }
 
       if (activeModule === 'Delivery' && rawStatus === 'completed') {
-        const req = {
+        const { error } = await deviceFitmentWebhook({
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
-          updatedAt,
           meta: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
-        };
-        const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Delivery', stage: 'TCU_DELIVERED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+        });
         if (error) console.warn('[cvp] TCU_DELIVERED webhook error:', error);
         else console.log(`[cvp] TCU_DELIVERED sent: ${ticket.tracking_id}`);
       }
@@ -587,7 +566,7 @@ export default function App() {
     setLogsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('api_response_logs')
+        .from('webhook_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(30);
@@ -792,16 +771,16 @@ export default function App() {
                     {ok  && <span style={{ fontSize: 13, color: '#22C55E' }}>▶</span>}
                   </div>
                   <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>{dateStr}, {timeStr}</div>
-                  {log.request && (
+                  {log.request_body && (
                     <details style={{ marginTop: 8 }}>
                       <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Request</summary>
-                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.request === 'string' ? log.request : JSON.stringify(log.request, null, 2)}</pre>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.request_body === 'string' ? log.request_body : JSON.stringify(log.request_body, null, 2)}</pre>
                     </details>
                   )}
-                  {log.response && (
+                  {log.response_body && (
                     <details style={{ marginTop: 4 }}>
                       <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Response</summary>
-                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.response === 'string' ? log.response : JSON.stringify(log.response, null, 2)}</pre>
+                      <pre style={{ fontSize: 11, color: '#334155', background: '#F8FAFC', borderRadius: 6, padding: '8px', marginTop: 4, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{typeof log.response_body === 'string' ? log.response_body : JSON.stringify(log.response_body, null, 2)}</pre>
                     </details>
                   )}
                 </div>
