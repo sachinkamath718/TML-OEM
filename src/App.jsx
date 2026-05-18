@@ -364,9 +364,8 @@ export default function App() {
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    // Use YYYY-MM-DD HH:mm:ss format as the API seems to reject ISO strings
-    const now = new Date();
-    const updatedAt = now.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    const updatedAt = Date.now();
+    const updated_at = Date.now();
 
     try {
       if (activeModule === 'AIS140') {
@@ -378,6 +377,7 @@ export default function App() {
           handler:         extraFields.handler         || '',
           handlerContact:  extraFields.handler_contact || '',
           updatedAt,
+          updated_at,
           metadata: {},
         };
         const { data, error } = await ais140RequestUpdate(req);
@@ -395,6 +395,7 @@ export default function App() {
           handler:        extraFields.handler         || '',
           handlerContact: extraFields.handler_contact || '',
           updatedAt,
+          updated_at,
           metadata: {},
         };
         const { data, error } = await miningRequestUpdate(req);
@@ -409,6 +410,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'DEVICE_INSTALLED',
           updatedAt,
+          updated_at,
           metadata: {
             technicianName:   extraFields.technician_name || '',
             installationDate: extraFields.scheduled_date  || '',
@@ -427,6 +429,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'TCU_SHIPPED',
           updatedAt,
+          updated_at,
           metadata: {
             iccId:                 extraFields.icc_id        || extraFields.iccid || '',
             courier:               extraFields.courier       || '',
@@ -446,6 +449,7 @@ export default function App() {
           vin:        ticket.vin,
           stage:      'TCU_DELIVERED',
           updatedAt,
+          updated_at,
           metadata: {
             remarks: `Delivered to ${extraFields.delivered_to || ''}`,
           },
