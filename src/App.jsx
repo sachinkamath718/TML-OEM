@@ -12,7 +12,7 @@ import WebhookLogPanel from './components/WebhookLogPanel';
 import { supabase } from './supabaseClient';
 import { deviceFitmentWebhook, ais140RequestUpdate, miningRequestUpdate } from './cvpClient';
 
-const MODULE_TABLE = { Orders: 'orders', Shipment: 'shipment_tickets', Delivery: 'delivery_tickets', Installation: 'installation_tickets', AIS140: 'ais140_tickets', Mining: 'mining_tickets' };
+const MODULE_TABLE = { Orders: 'order_vehicles', Shipment: 'shipment_tickets', Delivery: 'delivery_tickets', Installation: 'installation_tickets', AIS140: 'ais140_tickets', Mining: 'mining_tickets' };
 const MODULE_STAGE = { Orders: 'order', Shipment: 'shipment', Delivery: 'delivery', Installation: 'installation', AIS140: 'ais140', Mining: 'mining' };
 
 function normalizeTicket(t, mod) {
@@ -172,13 +172,7 @@ export default function App() {
                 key={`${activeModule}-${col}`} 
                 col={col} 
                 orders={filtered.filter(t => t.status === col)} 
-                onMoveClick={(t) => {
-                  if (activeModule === 'Orders') {
-                    alert('Please switch to a specific module tab (Installation, Shipment, etc.) to move ticket status.');
-                  } else {
-                    setMoveTarget(t);
-                  }
-                }} 
+                onMoveClick={(t) => setMoveTarget(t)} 
                 onHistoryClick={setDetailOrder} 
                 selectedIds={new Set()} 
                 onToggleSelect={()=>{}} 
