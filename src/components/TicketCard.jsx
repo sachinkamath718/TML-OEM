@@ -41,7 +41,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
       
       let apiData = data || {};
       if (error || apiData.err || apiData.error) {
-        setDevData({ onlineStatus: 'Error', error: error || apiData.err?.message || apiData.error || 'Unknown error' });
+        setDevData({ onlineStatus: 'Proxy Error', error: 'API: ' + (error || apiData.err?.message || apiData.error || 'Unknown error') });
         return;
       }
 
@@ -63,7 +63,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
 
       setDevData({ ...apiData, onlineStatus: oStatus });
     } catch (err) {
-      setDevData({ onlineStatus: 'Error', error: 'Network error — ' + err.message });
+      setDevData({ onlineStatus: 'Error', error: 'Network error v2 — ' + err.message });
     } finally {
       setDevLoading(false);
     }
