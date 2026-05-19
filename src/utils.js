@@ -8,7 +8,12 @@ export function generateTrackingId() {
 
 export function formatDate(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  // Supabase timestamps are UTC but often lack the 'Z' suffix. Append 'Z' if missing timezone info.
+  let safeIso = iso;
+  if (iso.includes('T') && !iso.endsWith('Z') && !iso.split('T')[1].includes('+') && !iso.split('T')[1].includes('-')) {
+    safeIso += 'Z';
+  }
+  const d = new Date(safeIso);
   return (
     d.toLocaleDateString('en-IN', {
       day:      '2-digit',
