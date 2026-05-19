@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatDate } from '../utils';
+import { getDeviceStatus } from '../cvpClient';
 
 export default function TicketCard({ order, module, onMoveClick, onHistoryClick, selected, onSelect, bulkMode }) {
   // Use order._module as the primary source of truth (set by normalizeTicket).
@@ -36,18 +37,11 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     setDevLoading(true);
     setDevData(null);
     try {
-      const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
-      const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
-      const text = await res.text();
-      let json = {};
-      if (text) {
-        try { json = JSON.parse(text); }
-        catch (e) { json = { error: 'Invalid JSON response' }; }
-      }
-
-      let apiData = json.data || json;
-      if (apiData.err || apiData.error) {
-        setDevData({ onlineStatus: 'Error', error: apiData.err?.message || apiData.error || 'Unknown error' });
+      const { data, error } = await getDeviceStatus(order.vin);
+      
+      let apiData = data || {};
+      if (error || apiData.err || apiData.error) {
+        setDevData({ onlineStatus: 'Error', error: error || apiData.err?.message || apiData.error || 'Unknown error' });
         return;
       }
 
