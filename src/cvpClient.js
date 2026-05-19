@@ -47,8 +47,17 @@ async function apiFetch(path, options = {}, retry = true) {
     return apiFetch(path, options, false);
   }
 
-  const json = await res.json();
-  return { ok: res.ok, status: res.status, json };
+  let json = null;
+  const text = await res.text();
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      json = { _raw: text };
+    }
+  }
+
+  return { ok: res.ok, status: res.status, json: json || { message: 'Success (No Content)' } };
 }
 
 // ─── Device Fitment Webhook ───────────────────────────────────────────────────
