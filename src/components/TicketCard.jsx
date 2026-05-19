@@ -39,9 +39,29 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
       const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
       const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
       const json = await res.json();
-      setDevData(json.data || { onlineStatus: 'Error', error: json.err?.message || 'Unknown error' });
-    } catch (err) {
-      setDevData({ onlineStatus: 'Error', error: 'Network error — ' + err.message });
+      let apiData = json.data || json;
+      if (apiData.err || apiData.error) {
+        setDevData({ onlineStatus: 'Error', error: apiData.err?.message || apiData.error || 'Unknown error' });
+        return;
+      }
+
+      // If no valid data is present, simulate the exact response body requested by user
+      if (!apiData || (Array.isArray(apiData.receivedMessages) && apiData.receivedMessages.length === 0 && !apiData.telemetryLastMessageDateTime)) {
+        apiData = {
+          receivedMessages: [],
+          telemetryLastMessageDateTime: null,
+          canLastMessageDateTime: null,
+          telemetryOdometer: null,
+          canOdometer: null
+        };
+      }
+
+      // Compute online status based on receivedMessages length or dates
+      let oStatus = 'Offline';
+      if (apiData.receivedMessages?.length > 1) oStatus = 'Online';
+      else if (apiData.receivedMessages?.length === 1) oStatus = 'Partial';
+
+      setDevData({ ...apiData, onlineStatus: oStatus });
     } finally {
       setDevLoading(false);
     }

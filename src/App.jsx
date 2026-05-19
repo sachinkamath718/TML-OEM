@@ -385,7 +385,10 @@ export default function App() {
         };
         const { data, error } = await ais140RequestUpdate(req);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'AIS140', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn('[cvp] AIS140 webhook error:', error);
+        if (error) {
+          console.warn('[cvp] AIS140 webhook error:', error);
+          throw new Error(`AIS140 webhook failed: ${error.message || JSON.stringify(error)}`);
+        }
         else console.log(`[cvp] AIS140 webhook sent: ${ticket.ticket_no} → ${statusStr}`);
       }
 
@@ -402,7 +405,10 @@ export default function App() {
         };
         const { data, error } = await miningRequestUpdate(req);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Mining', stage: statusStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn('[cvp] Mining webhook error:', error);
+        if (error) {
+          console.warn('[cvp] Mining webhook error:', error);
+          throw new Error(`Mining webhook failed: ${error.message || JSON.stringify(error)}`);
+        }
         else console.log(`[cvp] Mining webhook sent: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
 
@@ -436,11 +442,16 @@ export default function App() {
         };
         const { data, error } = await deviceFitmentWebhook(req);
         await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: activeModule, stage: stageStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn(`[cvp] ${stageStr} webhook error:`, error);
+        if (error) {
+          console.warn(`[cvp] ${stageStr} webhook error:`, error);
+          const errMsg = error.errors ? error.errors.join(', ') : error.message || JSON.stringify(error);
+          throw new Error(`Webhook failed: ${errMsg}`);
+        }
         else console.log(`[cvp] ${stageStr} sent: ${ticket.tracking_id}`);
       }
     } catch (webhookErr) {
-      console.warn('[cvp] Webhook fire failed (non-blocking):', webhookErr.message);
+      console.warn('[cvp] Webhook fire failed:', webhookErr.message);
+      throw webhookErr; // Make it blocking
     }
   }
 
@@ -473,6 +484,11 @@ export default function App() {
     try {
       let updateErr;
 
+      const ticketWithTime = { ...ticket, updated_at: now };
+      
+      // Fire webhook FIRST. If it fails, an error is thrown and DB update is aborted.
+      await fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
+
       if (activeModule === 'Orders') {
         const vehicleTrackingId = ticket._vehicle_tracking_id || ticket.tracking_id;
         ({ error: updateErr } = await supabase
@@ -487,10 +503,7 @@ export default function App() {
       }
       if (updateErr) throw updateErr;
 
-      const ticketWithTime = { ...ticket, updated_at: now };
-
       await writeHistory(ticketWithTime, ticket._rawStatus, rawStatus, { notes });
-      await fireOutboundWebhook(ticketWithTime, rawStatus, webhookFields);
 
       const fresh = await fetchModule(activeModule);
       setTicketMap((prev) => ({ ...prev, [activeModule]: fresh }));
@@ -520,6 +533,9 @@ export default function App() {
       await Promise.all(ids.map(async (id) => {
         const ticket = tickets.find((t) => t.id === id);
         if (!ticket) return;
+        
+        await fireOutboundWebhook({ ...ticket, updated_at: now }, rawStatus, {});
+        
         const { error: updateErr } = await supabase
           .from(ticket._table)
           .update({ status: rawStatus, updated_at: now })
