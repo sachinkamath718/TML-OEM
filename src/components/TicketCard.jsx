@@ -38,7 +38,13 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
     try {
       const apiBase = import.meta.env.VITE_TML_API_URL || 'https://tml-oem-api.vercel.app';
       const res  = await fetch(`${apiBase}/device-status?vehicle-id=${encodeURIComponent(order.vin)}`);
-      const json = await res.json();
+      const text = await res.text();
+      let json = {};
+      if (text) {
+        try { json = JSON.parse(text); }
+        catch (e) { json = { error: 'Invalid JSON response' }; }
+      }
+
       let apiData = json.data || json;
       if (apiData.err || apiData.error) {
         setDevData({ onlineStatus: 'Error', error: apiData.err?.message || apiData.error || 'Unknown error' });
@@ -46,7 +52,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
       }
 
       // If no valid data is present, simulate the exact response body requested by user
-      if (!apiData || (Array.isArray(apiData.receivedMessages) && apiData.receivedMessages.length === 0 && !apiData.telemetryLastMessageDateTime)) {
+      if (!apiData || Object.keys(apiData).length === 0 || (Array.isArray(apiData.receivedMessages) && apiData.receivedMessages.length === 0 && !apiData.telemetryLastMessageDateTime)) {
         apiData = {
           receivedMessages: [],
           telemetryLastMessageDateTime: null,
@@ -62,6 +68,8 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
       else if (apiData.receivedMessages?.length === 1) oStatus = 'Partial';
 
       setDevData({ ...apiData, onlineStatus: oStatus });
+    } catch (err) {
+      setDevData({ onlineStatus: 'Error', error: 'Network error — ' + err.message });
     } finally {
       setDevLoading(false);
     }
