@@ -132,7 +132,7 @@ export default function DetailDrawer({ order, onClose, onMoveClick }) {
             <Row label="Emission"   value={order.emission_type || order.vehicle_details?.emission_type || '—'} />
             <Row label="Mfg. Year"  value={order.mfg_year || order.vehicle_details?.mfg_year || '—'} />
             <Row label="RTO"        value={[order.rto_office_code, order.rto_state].filter(Boolean).join(', ') || '—'} />
-            {order.sim_expiry_date && <Row label="SIM Expiry" value={new Date(order.sim_expiry_date).toLocaleDateString('en-IN')} />}
+            {order.sim_expiry_date && <Row label="SIM Expiry" value={formatDate(order.sim_expiry_date)} />}
           </Section>
 
           {/* Customer Details */}

@@ -99,7 +99,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
               background: isSimExpired(order.sim_expiry_date) ? '#FEF2F2' : '#F0FDF4',
               padding: '1px 6px', borderRadius: 4, border: `1px solid ${isSimExpired(order.sim_expiry_date) ? '#FECACA' : '#BBF7D0'}`
             }}>
-              SIM: {new Date(order.sim_expiry_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+              SIM: {order.sim_expiry_date ? formatDate(order.sim_expiry_date) : '—'}
               {isSimExpired(order.sim_expiry_date) && ' ⚠'}
             </div>
           )}
@@ -198,7 +198,7 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                 fontFamily: "'DM Mono', monospace",
               }}>
                 {order.sim_expiry_date
-                  ? new Date(order.sim_expiry_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+                  ? formatDate(order.sim_expiry_date)
                   : '—'}
               </span>
             </div>

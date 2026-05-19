@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 // Build Version: 2026.05.14.8 - Flat order_vehicles query, no join fan-out duplication
 import { COLUMNS, AIS_MINING_COLUMNS, AIS_MINING_MODULES, MODULES } from './constants';
 
-import { generateId } from './utils';
+import { generateId, formatDate } from './utils';
 
 import Sidebar from './components/Sidebar';
 import KanbanColumn from './components/KanbanColumn';
@@ -760,9 +760,7 @@ export default function App() {
               <div style={{ textAlign: 'center', color: '#94A3B8', fontSize: 13, padding: '40px 0' }}>No webhook logs found</div>
             ) : webhookLogs.map((log, i) => {
               const ok      = log.status_code >= 200 && log.status_code < 300;
-              const ts      = log.created_at ? new Date(log.created_at) : null;
-              const dateStr = ts ? ts.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
-              const timeStr = ts ? ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + ts.toLocaleTimeString('en-GB', { hour12: true }).slice(-2).toLowerCase() : '';
+              const formattedTime = formatDate(log.created_at);
               return (
                 <div key={log.id || i} style={{ background: ok ? '#F0FDF4' : '#FFF1F2', border: `1px solid ${ok ? '#BBF7D0' : '#FECDD3'}`, borderRadius: 12, padding: '12px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -775,7 +773,7 @@ export default function App() {
                     {!ok && <span style={{ fontSize: 16, color: '#F43F5E' }}>✕</span>}
                     {ok  && <span style={{ fontSize: 13, color: '#22C55E' }}>▶</span>}
                   </div>
-                  <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>{dateStr}, {timeStr}</div>
+                  <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>{formattedTime}</div>
                   {log.request && (
                     <details style={{ marginTop: 8 }}>
                       <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>Request</summary>
