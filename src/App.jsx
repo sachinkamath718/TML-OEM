@@ -357,17 +357,17 @@ export default function App() {
   // ─── Fire outbound webhook via CVP client ─────────────────────────────────
   async function fireOutboundWebhook(ticket, rawStatus, extraFields = {}) {
     const STATUS_MAP = {
+      pending:                         'PENDING',
       in_progress:                     'IN_PROGRESS',
       completed:                       'COMPLETED',
       on_hold:                         'ON_HOLD',
+      failed:                          'FAILED',
       cancelled:                       'CANCELLED',
       cancelled_due_to_change_request: 'CANCELLED_DUE_TO_CHANGE_REQUEST',
     };
     const statusStr  = STATUS_MAP[rawStatus];
     if (!statusStr) return;
 
-    // deviceFitmentWebhook (/webhooks/device-fitment) expects updatedAt as Unix epoch ms (number).
-    // ais140 and mining endpoints expect updatedAt as ISO 8601 string.
     const updatedAtMs  = Date.now();
     const updatedAtIso = new Date(updatedAtMs).toISOString();
 
@@ -406,60 +406,38 @@ export default function App() {
         else console.log(`[cvp] Mining webhook sent: ${ticket.mining_ticket_no} → ${statusStr}`);
       }
 
-      if (activeModule === 'Installation' && rawStatus === 'completed') {
-        const req = {
-          trackingId: ticket.tracking_id,
-          vin:        ticket.vin,
-          stage:      'DEVICE_INSTALLED',
-          updatedAt:  new Date().toISOString().slice(0, 19),
-          updated_at: Date.now(),
-          meta: {
-            technicianName:   extraFields.technician_name || '',
-            installationDate: extraFields.scheduled_date  || '',
-            remarks:          extraFields.remark          || 'Marked completed from Kanban',
-          },
-        };
-        const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Installation', stage: 'DEVICE_INSTALLED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn('[cvp] DEVICE_INSTALLED webhook error:', error);
-        else console.log(`[cvp] DEVICE_INSTALLED sent: ${ticket.tracking_id}`);
-      }
+      if (['Shipment', 'Delivery', 'Installation'].includes(activeModule)) {
+        let stageStr = '';
+        let meta = { status: statusStr }; // Included in meta since top-level API doesn't accept it
 
-      if (activeModule === 'Shipment' && rawStatus === 'in_progress') {
-        const req = {
-          trackingId: ticket.tracking_id,
-          vin:        ticket.vin,
-          stage:      'TCU_SHIPPED',
-          updatedAt:  new Date().toISOString().slice(0, 19),
-          updated_at: Date.now(),
-          meta: {
-            iccId:                 extraFields.icc_id        || extraFields.iccid || '',
-            courier:               extraFields.courier       || '',
-            courierTrackingNumber: extraFields.awb_number    || '',
-            expectedDelivery:      extraFields.expected_delivery || '',
-          },
-        };
-        const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Shipment', stage: 'TCU_SHIPPED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn('[cvp] TCU_SHIPPED webhook error:', error);
-        else console.log(`[cvp] TCU_SHIPPED sent: ${ticket.tracking_id}`);
-      }
+        if (activeModule === 'Installation') {
+          stageStr = 'DEVICE_INSTALLED';
+          meta.technicianName   = extraFields.technician_name || '';
+          meta.installationDate = extraFields.scheduled_date  || '';
+          meta.remarks          = extraFields.remark          || `Moved to Kanban column: ${statusStr}`;
+        } else if (activeModule === 'Shipment') {
+          stageStr = 'TCU_SHIPPED';
+          meta.iccId                 = extraFields.icc_id        || extraFields.iccid || '';
+          meta.courier               = extraFields.courier       || '';
+          meta.courierTrackingNumber = extraFields.awb_number    || '';
+          meta.expectedDelivery      = extraFields.expected_delivery || '';
+        } else if (activeModule === 'Delivery') {
+          stageStr = 'TCU_DELIVERED';
+          meta.remarks = `Delivered to ${extraFields.delivered_to || ''}`;
+        }
 
-      if (activeModule === 'Delivery' && rawStatus === 'completed') {
         const req = {
           trackingId: ticket.tracking_id,
           vin:        ticket.vin,
-          stage:      'TCU_DELIVERED',
+          stage:      stageStr,
           updatedAt:  new Date().toISOString().slice(0, 19),
           updated_at: Date.now(),
-          meta: {
-            remarks: `Delivered to ${extraFields.delivered_to || ''}`,
-          },
+          meta,
         };
         const { data, error } = await deviceFitmentWebhook(req);
-        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: 'Delivery', stage: 'TCU_DELIVERED', request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
-        if (error) console.warn('[cvp] TCU_DELIVERED webhook error:', error);
-        else console.log(`[cvp] TCU_DELIVERED sent: ${ticket.tracking_id}`);
+        await logWebhook({ vin: ticket.vin, tracking_id: ticket.tracking_id, module: activeModule, stage: stageStr, request: req, response: data || error, status_code: error ? 500 : 200, success: !error });
+        if (error) console.warn(`[cvp] ${stageStr} webhook error:`, error);
+        else console.log(`[cvp] ${stageStr} sent: ${ticket.tracking_id}`);
       }
     } catch (webhookErr) {
       console.warn('[cvp] Webhook fire failed (non-blocking):', webhookErr.message);
