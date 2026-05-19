@@ -346,14 +346,19 @@ export default function TicketCard({ order, module, onMoveClick, onHistoryClick,
                     [
                       ['Telemetry Last Seen',  devData.telemetryLastMessageDateTime],
                       ['CAN Last Seen',        devData.canLastMessageDateTime],
-                      ['Telemetry Odometer',   devData.telemetryOdometer   != null ? `${devData.telemetryOdometer} km`   : null],
-                      ['CAN Odometer',         devData.canOdometer         != null ? `${devData.canOdometer} km`         : null],
-                    ].filter(([, v]) => v != null).map(([label, value]) => (
-                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <span style={{ fontSize: 11, color: '#64748B' }}>{label}</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#0F172A', fontFamily: "'DM Mono', monospace" }}>{value}</span>
-                      </div>
-                    ))
+                      ['Telemetry Odometer',   devData.telemetryOdometer],
+                      ['CAN Odometer',         devData.canOdometer],
+                    ].map(([label, value]) => {
+                      const displayValue = value === null ? 'null' : (label.includes('Odometer') ? `${value} km` : value);
+                      return (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <span style={{ fontSize: 11, color: '#64748B' }}>{label}</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: value === null ? '#94A3B8' : '#0F172A', fontFamily: "'DM Mono', monospace" }}>
+                            {displayValue}
+                          </span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </>
